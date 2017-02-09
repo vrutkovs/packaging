@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+if [ ! -e /var/lib/pulp/celery ]
+    mkdir /var/lib/pulp/celery
+fi
+
 # the apache user needs write access to this directory
 chown apache /var/lib/pulp
 chown apache /var/lib/pulp/celery

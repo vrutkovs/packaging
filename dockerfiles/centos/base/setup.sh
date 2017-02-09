@@ -3,6 +3,7 @@ set -x
 
 
 if [ ! -e /var/lib/pulp/celery ]
+then
     mkdir /var/lib/pulp/celery
 fi
 
@@ -35,6 +36,10 @@ if [ -n "$DB" ]; then
     sed -i "s;db:27017;$DB:27017;g" /etc/pulp/server.conf
 fi
 
+if [ ! -e /dev/log ]
+then
+    ln -s /dev/null /dev/log
+fi
 
 # a hacky way of waiting until mongo is done initializing itself. Eventually
 # (probably 2.5.1) pulp-manage-db will do this on its own in a reasonable way.

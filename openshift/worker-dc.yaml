@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: DeploymentConfig
+metadata:
+  creationTimestamp: null
+  generation: 1
+  name: worker
+spec:
+  replicas: 1
+  selector:
+    name: worker
+  strategy:
+    resources: {}
+    rollingParams:
+      intervalSeconds: 1
+      maxSurge: 25%
+      maxUnavailable: 25%
+      timeoutSeconds: 600
+      updatePeriodSeconds: 1
+    type: Rolling
+  template:
+    metadata:
+      annotations:
+        openshift.io/scc: privileged
+      creationTimestamp: null
+      labels:
+        name: worker
+    spec:
+      containers:
+      - image: worker:latest
+        imagePullPolicy: IfNotPresent
+        name: worker
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        command: ["/run.sh", "worker"]
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /dev/log
+          name: dev-log-volume
+        - mountPath: /etc/pulp
+          name: etc-pulp-volume
+        - mountPath: /etc/pki/pulp
+          name: etc-pki-pulp-volume
+        - mountPath: /var/lib/pulp
+          name: var-lib-pulp-volume
+      restartPolicy: Never
+      volumes:
+        - name: dev-log-volume
+          persistentVolumeClaim:
+            claimName: dev-log-claim
+        - name: etc-pulp-volume
+          persistentVolumeClaim:
+            claimName: etc-pulp-claim
+        - name: etc-pki-pulp-volume
+          persistentVolumeClaim:
+            claimName: etc-pki-pulp-claim
+        - name: var-lib-pulp-volume
+          persistentVolumeClaim:
+            claimName: var-lib-pulp-claim
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+  test: false
+  triggers:
+  - type: ConfigChange
+  - imageChangeParams:
+      automatic: true
+      containerNames:
+      - worker
+      from:
+        kind: ImageStreamTag
+        name: "worker:latest"
+    type: ImageChange

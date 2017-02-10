@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: DeploymentConfig
+metadata:
+  creationTimestamp: null
+  generation: 1
+  name: qpid
+spec:
+  replicas: 1
+  selector:
+    name: qpid
+  strategy:
+    resources: {}
+    rollingParams:
+      intervalSeconds: 1
+      maxSurge: 25%
+      maxUnavailable: 25%
+      timeoutSeconds: 600
+      updatePeriodSeconds: 1
+    type: Rolling
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        name: qpid
+      annotations:
+        openshift.io/scc: privileged
+    spec:
+      containers:
+      - image: qpid
+        imagePullPolicy: IfNotPresent
+        name: qpid
+        resources: {}
+        securityContext:
+          privileged: false
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+  test: false
+  triggers:
+  - type: ConfigChange
+  - imageChangeParams:
+      automatic: true
+      containerNames:
+      - qpid
+      from:
+        kind: ImageStreamTag
+        name: qpid:latest
+    type: ImageChange

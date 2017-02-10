@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  name: crane
+spec:
+  ports:
+  - port: 5000
+    protocol: TCP
+    targetPort: 80
+  selector:
+    name: crane
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}

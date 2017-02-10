@@ -10,8 +10,7 @@ RUN  yum update -y && \
          pulp-admin && \
      yum install -y \
          pulp-docker-admin-extensions pulp-python-admin-extensions && \
-     yum clean all && \
-     echo "10.3.9.64 pulpapi" >> /etc/hosts
+     yum clean all
 
 # config and uploads dir
 VOLUME ["/.pulp /run/pulp_uploads"]

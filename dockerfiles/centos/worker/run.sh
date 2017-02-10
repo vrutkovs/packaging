@@ -4,14 +4,14 @@ case $1 in
   worker)
     WORKER_NAME=${2:-$(hostname)}
       exec runuser apache \
-	-s /bin/bash \
-	-c "/usr/bin/celery worker \
-	--events --app=pulp.server.async.app \
-	--loglevel=INFO \
-	-c 1 \
+        -s /bin/bash \
+        -c "/usr/bin/celery worker \
+        --events --app=pulp.server.async.app \
+        --loglevel=INFO \
+        -c 1 \
         --umask=18 \
-	-n reserved_resource_worker-$WORKER_NAME@$WORKER_HOST \
-	--logfile=/var/log/pulp/reserved_resource_worker-$WORKER_NAME.log"
+        -n reserved_resource_worker-$WORKER_NAME@$WORKER_HOST \
+        --logfile=/var/log/pulp/reserved_resource_worker-$WORKER_NAME.log"
     ;;
   beat)
     exec runuser apache -s /bin/bash -c "/usr/bin/celery beat --workdir /var/lib/pulp/celery/ -A pulp.server.async.app -f /var/log/pulp/celerybeat.log -l INFO"

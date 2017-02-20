@@ -2,14 +2,10 @@
 set -x
 
 
-if [ ! -e /var/lib/pulp/celery ]
-then
-    mkdir /var/lib/pulp/celery
-fi
+mkdir /var/lib/pulp/celery
 
 # the apache user needs write access to this directory
-chown apache /var/lib/pulp
-chown apache /var/lib/pulp/celery
+chown apache -R /var/lib/pulp
 chown apache /var/log/pulp
 
 # copy the basic directory structure if it isn't already present.

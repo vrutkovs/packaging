@@ -207,7 +207,7 @@ objects:
   kind: BuildConfig
   metadata:
     creationTimestamp: null
-    name: worker
+    name: workers
   spec:
     nodeSelector: null
     output:
@@ -304,8 +304,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: beat
@@ -319,7 +317,6 @@ objects:
           name: beat
           resources: {}
           securityContext:
-            privileged: true
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
           volumeMounts:
@@ -339,7 +336,6 @@ objects:
           name: resource-manager
           resources: {}
           securityContext:
-            privileged: true
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
           volumeMounts:
@@ -354,6 +350,8 @@ objects:
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         terminationGracePeriodSeconds: 30
         volumes:
         - name: dev-log-volume
@@ -403,8 +401,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: crane
@@ -415,7 +411,6 @@ objects:
           name: crane
           resources: {}
           securityContext:
-            privileged: true
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
           volumeMounts:
@@ -432,6 +427,8 @@ objects:
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         terminationGracePeriodSeconds: 30
         volumes:
         - name: crane-volume
@@ -483,8 +480,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: mongodb
@@ -495,11 +490,12 @@ objects:
           name: mongodb
           resources: {}
           securityContext:
-            privileged: false
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
         dnsPolicy: ClusterFirst
         restartPolicy: Always
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         securityContext: {}
         terminationGracePeriodSeconds: 30
     test: false
@@ -536,8 +532,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: pulpapi
@@ -548,7 +542,6 @@ objects:
           name: pulpapi
           resources: {}
           securityContext:
-            privileged: true
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
           volumeMounts:
@@ -565,6 +558,8 @@ objects:
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         terminationGracePeriodSeconds: 30
         volumes:
         - name: pulpapi-volume
@@ -600,6 +595,86 @@ objects:
   metadata:
     creationTimestamp: null
     generation: 1
+    name: prepare
+  spec:
+    replicas: 1
+    selector:
+      name: prepare
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          name: prepare
+      spec:
+        containers:
+        - image: base:latest
+          imagePullPolicy: IfNotPresent
+          command: ["bash",  "-c", "/setup.sh"]
+          name: prepare
+          resources: {}
+          securityContext:
+            runAsUser: 0
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /var/log/httpd
+            name: pulpapi-volume
+          - mountPath: /dev/log
+            name: dev-log-volume
+          - mountPath: /etc/pulp
+            name: etc-pulp-volume
+          - mountPath: /etc/pki/pulp
+            name: etc-pki-pulp-volume
+          - mountPath: /var/lib/pulp
+            name: var-lib-pulp-volume
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - name: pulpapi-volume
+          persistentVolumeClaim:
+            claimName: pulpapi-claim
+        - name: dev-log-volume
+          persistentVolumeClaim:
+            claimName: dev-log-claim
+        - name: etc-pulp-volume
+          persistentVolumeClaim:
+            claimName: etc-pulp-claim
+        - name: etc-pki-pulp-volume
+          persistentVolumeClaim:
+            claimName: etc-pki-pulp-claim
+        - name: var-lib-pulp-volume
+          persistentVolumeClaim:
+            claimName: var-lib-pulp-claim
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - prepare
+        from:
+          kind: ImageStreamTag
+          name: base:latest
+          namespace: pulp
+      type: ImageChange
+  status: {}
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    creationTimestamp: null
+    generation: 1
     name: qpid
   spec:
     replicas: 1
@@ -616,8 +691,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: qpid
@@ -628,12 +701,13 @@ objects:
           name: qpid
           resources: {}
           securityContext:
-            privileged: false
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         terminationGracePeriodSeconds: 30
     test: false
     triggers:
@@ -669,8 +743,6 @@ objects:
       type: Rolling
     template:
       metadata:
-        annotations:
-          openshift.io/scc: privileged
         creationTimestamp: null
         labels:
           name: worker
@@ -684,7 +756,6 @@ objects:
           name: worker
           resources: {}
           securityContext:
-            privileged: true
             runAsUser: 0
           terminationMessagePath: /dev/termination-log
           volumeMounts:
@@ -699,6 +770,8 @@ objects:
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
+        serviceAccount: pulp-sa
+        serviceAccountName: pulp-sa
         terminationGracePeriodSeconds: 30
         volumes:
         - name: dev-log-volume
@@ -796,127 +869,6 @@ objects:
   status:
     loadBalancer: {}
 - apiVersion: v1
-  kind: Pod
-  metadata:
-    name: prepare
-    annotations:
-      openshift.io/scc: privileged
-  spec:
-    containers:
-    - name: prepare
-      image: base
-      imagePullPolicy: Always
-      command: ["bash",  "-c", "/setup.sh"]
-      env:
-        - name: QPID
-          value: qpid.${NAMESPACE}.svc.cluster.local
-        - name: DB
-          value: db.${NAMESPACE}.svc.cluster.local
-      securityContext:
-        privileged: true
-        runAsUser: 0
-      volumeMounts:
-      - mountPath: /dev/log
-        name: dev-log-volume
-      - mountPath: /etc/pulp
-        name: etc-pulp-volume
-      - mountPath: /etc/pki/pulp
-        name: etc-pki-pulp-volume
-      - mountPath: /var/lib/pulp
-        name: var-lib-pulp-volume
-    restartPolicy: Never
-    volumes:
-      - name: dev-log-volume
-        persistentVolumeClaim:
-          claimName: dev-log-claim
-      - name: etc-pulp-volume
-        persistentVolumeClaim:
-          claimName: etc-pulp-claim
-      - name: etc-pki-pulp-volume
-        persistentVolumeClaim:
-          claimName: etc-pki-pulp-claim
-      - name: var-lib-pulp-volume
-        persistentVolumeClaim:
-          claimName: var-lib-pulp-claim
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: crane-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 100Mi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: ${VOLUME_PATH}/crane-volume
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: dev-log-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 1Mi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: /dev/log
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: etc-pki-pulp-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 10Mi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: ${VOLUME_PATH}/etc-pki-pulp-volume
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: etc-pulp-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 10Mi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: ${VOLUME_PATH}/etc-pulp-volume
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: pulpapi-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 100Mi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: ${VOLUME_PATH}/pulpapi-volume
-- apiVersion: v1
-  kind: PersistentVolume
-  metadata:
-    name: var-lib-pulp-volume
-    namespace: pulp
-  spec:
-    capacity:
-      storage: 1Gi
-    accessModes:
-      - ReadWriteMany
-    persistentVolumeReclaimPolicy: Retain
-    hostPath:
-      path: ${VOLUME_PATH}/var-lib-pulp-volume
-- apiVersion: v1
   kind: PersistentVolumeClaim
   metadata:
     name: crane-claim
@@ -983,14 +935,6 @@ objects:
         storage: 1Gi
     volumeName: var-lib-pulp-volume
 parameters:
-  - name: NAMESPACE 
-    displayName: Current namespace
-    value: koji
-    required: true
-  - name: VOLUME_PATH
-    displayName: Path for volumes on a single node
-    value: /volumes
-    required: true 
   - name: PULP_PACKAGING_REMOTE
     displayName: Remote for pulp packaging repo
     value: https://github.com/pulp/packaging

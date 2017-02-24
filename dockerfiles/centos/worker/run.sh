@@ -7,7 +7,7 @@ case $1 in
         -s /bin/bash \
         -c "/usr/bin/celery worker \
         --events --app=pulp.server.async.app \
-        --loglevel=INFO \
+        --loglevel=DEBUG \
         -c 1 \
         --umask=18 \
         -n reserved_resource_worker-$WORKER_NAME@$WORKER_HOST \

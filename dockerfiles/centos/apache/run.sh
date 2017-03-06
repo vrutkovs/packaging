@@ -11,7 +11,7 @@ cat << EOF | make testcert
 .
 .
 .
-pulpapi
+pulp.10.8.168.18.xip.io
 .
 EOF
 fi

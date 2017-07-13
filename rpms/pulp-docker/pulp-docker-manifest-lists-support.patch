@@ -1,0 +1,1388 @@
+From bddb101394217387108ad9cab56ec1f618255fde Mon Sep 17 00:00:00 2001
+From: Ina Panova <ipanova@redhat.com>
+Date: Tue, 20 Jun 2017 18:40:55 +0200
+Subject: [PATCH] fat manifest
+
+---
+ common/pulp_docker/common/constants.py             |   4 +
+ docs/tech-reference/tags.rst                       |  75 +++++-----
+ docs/user-guide/concepts.rst                       |  16 ++-
+ .../pulp_docker/extensions/admin/content.py        | 100 ++++++++++++-
+ .../pulp_docker/extensions/admin/pulp_cli.py       |   3 +
+ .../pulp_docker/extensions/admin/upload.py         |   8 +-
+ plugins/etc/httpd/conf.d/pulp_docker.conf          |   7 +
+ .../plugins/distributors/publish_steps.py          | 109 ++++++++++++---
+ plugins/pulp_docker/plugins/importers/importer.py  | 154 ++++++++++++++++++---
+ plugins/pulp_docker/plugins/importers/sync.py      |  68 ++++++---
+ plugins/pulp_docker/plugins/importers/upload.py    |  28 +++-
+ .../plugins/migrations/0004_tag_schema_change.py   |  18 +++
+ .../0005_remove_manifest_unused_fields.py          |  17 +++
+ plugins/pulp_docker/plugins/models.py              | 151 ++++++++++++++------
+ plugins/pulp_docker/plugins/registry.py            |  45 ++++--
+ plugins/setup.py                                   |   1 +
+ 20 files changed, 714 insertions(+), 209 deletions(-)
+ create mode 100644 docs/user-guide/release-notes/3.0.x.rst
+ create mode 100644 plugins/pulp_docker/plugins/migrations/0004_tag_schema_change.py
+ create mode 100644 plugins/pulp_docker/plugins/migrations/0005_remove_manifest_unused_fields.py
+
+diff --git a/common/pulp_docker/common/constants.py b/common/pulp_docker/common/constants.py
+index 8ab5ac1..152be2c 100644
+--- a/common/pulp_docker/common/constants.py
++++ b/common/pulp_docker/common/constants.py
+@@ -1,6 +1,9 @@
+ BLOB_TYPE_ID = 'docker_blob'
+ IMAGE_TYPE_ID = 'docker_image'
+ MANIFEST_TYPE_ID = 'docker_manifest'
++MANIFEST_LIST_TYPE_ID = 'docker_manifest_list'
++MANIFEST_LIST_TYPE = 'list'
++MANIFEST_IMAGE_TYPE = 'image'
+ TAG_TYPE_ID = 'docker_tag'
+ IMPORTER_TYPE_ID = 'docker_importer'
+ IMPORTER_CONFIG_FILE_NAME = 'server/plugins.conf.d/docker_importer.json'
+@@ -51,6 +54,7 @@
+ PUBLISH_STEP_BLOBS = 'publish_blobs'
+ PUBLISH_STEP_IMAGES = 'publish_images'
+ PUBLISH_STEP_MANIFESTS = 'publish_manifests'
++PUBLISH_STEP_MANIFEST_LISTS = 'publish_manifest_lists'
+ PUBLISH_STEP_REDIRECT_FILE = 'publish_redirect_file'
+ PUBLISH_STEP_TAGS = 'publish_tags'
+ PUBLISH_STEP_OVER_HTTP = 'publish_images_over_http'
+diff --git a/docs/tech-reference/tags.rst b/docs/tech-reference/tags.rst
+index a6a15d8..1a8a8d6 100644
+--- a/docs/tech-reference/tags.rst
++++ b/docs/tech-reference/tags.rst
+@@ -6,60 +6,59 @@ v2
+
+ Manifest Tags are stored as Pulp Units. Each Tag has a name, a manifest_digest
+ (the digest of the Manifest that the Tag references), schema_version (the schema version
+-for the manifest the Tag references) and a repo_id. A Tag's name, schema_version and repo_id
++for the manifest the Tag references), manifest_type( image manifest or manifest list the
++Tag references) and a repo_id. A Tag's name, schema_version, manifest_type and repo_id
+ must be unique together so that in any given repository a Tag only references
+-a single Manifest that uses either schema version 1 or schema version 2.
++a single Manifest(image or list).
+ Here is an example of tag with name 'latest' within a repository::
+
+     [
+       {
+-        "updated": "2017-02-09T15:52:46Z",
+-        "repo_id": "synctest",
+-        "created": "2017-02-09T15:52:46Z",
+-        "_ns": "repo_content_units",
+-        "unit_id": "19986269-4666-4dad-acbe-b0cce808bb21",
+-        "unit_type_id": "docker_tag",
++        "updated": "2017-07-12T11:43:29Z",
++        "repo_id": "man-list",
++        "created": "2017-07-12T11:43:29Z",
++        "unit_id": "98a4ba20-f60e-4b9d-8aa3-9bbe23030b4c",
++        "unit_type_id": "docker_tag",
+         "_id": {
+-          "$oid": "589c904e45ef487707c641fa"
+-        },
+-        "id": "589c904e45ef487707c641fa",
++          "$oid": "59660b6152e81521aead11c3"
++        },
+         "metadata": {
+-          "repo_id": "synctest",
+-          "manifest_digest": "sha256:817a12c32a39bbe394944ba49de563e085f1d3c5266eb8e9723256bc4448680e",
+-          "_ns": "units_docker_tag",
+-          "_last_updated": 1486655449,
+-          "schema_version": 2,
+-          "pulp_user_metadata": {},
+-          "_content_type_id": "docker_tag",
+-          "_id": "19986269-4666-4dad-acbe-b0cce808bb21",
++          "repo_id": "man-list",
++          "manifest_digest": "sha256:69fd2d3fa813bcbb3a572f1af80fe31a1710409e15dde91af79be62b37ab4f70",
++          "manifest_type": "list",
++          "_ns": "units_docker_tag",
++          "_last_updated": 1499859809,
++          "schema_version": 2,
++          "pulp_user_metadata": {},
++          "_content_type_id": "docker_tag",
++          "_id": "98a4ba20-f60e-4b9d-8aa3-9bbe23030b4c",
+           "name": "latest"
+         }
+-      },
++      },
+       {
+-        "updated": "2017-02-09T16:02:54Z",
+-        "repo_id": "synctest",
+-        "created": "2017-02-09T16:02:54Z",
+-        "_ns": "repo_content_units",
+-        "unit_id": "7f92741b-5379-4f13-8b43-0d3ebd9c5c25",
+-        "unit_type_id": "docker_tag",
++        "updated": "2017-07-12T11:43:29Z",
++        "repo_id": "man-list",
++        "created": "2017-07-12T11:43:29Z",
++        "unit_id": "cf56285e-1acd-4834-9dbd-35721b8964e6",
++        "unit_type_id": "docker_tag",
+         "_id": {
+-          "$oid": "589c92ae45ef487707c641fd"
+-        },
+-        "id": "589c92ae45ef487707c641fd",
++          "$oid": "59660b6152e81521aead11c2"
++        },
+         "metadata": {
+-          "repo_id": "synctest",
+-          "manifest_digest": "sha256:c152ddeda2b828fbb610cb9e4cb121e1879dd5301d336f0a6c070b2844a0f56d",
+-          "_ns": "units_docker_tag",
+-          "_last_updated": 1486653137,
+-          "schema_version": 1,
+-          "pulp_user_metadata": {},
+-          "_content_type_id": "docker_tag",
+-          "_id": "7f92741b-5379-4f13-8b43-0d3ebd9c5c25",
++          "repo_id": "man-list",
++          "manifest_digest": "sha256:7864a5b2d5ba865d0b3183071a4fc0dcaa365a599e90d5b54903076ed4ec5155",
++          "manifest_type": "image",
++          "_ns": "units_docker_tag",
++          "_last_updated": 1499859809,
++          "schema_version": 1,
++          "pulp_user_metadata": {},
++          "_content_type_id": "docker_tag",
++          "_id": "cf56285e-1acd-4834-9dbd-35721b8964e6",
+           "name": "latest"
+         }
+       }
+     ]
+-
++
+
+ v1
+ --
+diff --git a/docs/user-guide/concepts.rst b/docs/user-guide/concepts.rst
+index 412bc34..56c77ce 100644
+--- a/docs/user-guide/concepts.rst
++++ b/docs/user-guide/concepts.rst
+@@ -7,13 +7,14 @@ Docker v2 Concepts
+ Repository and Tags
+ ^^^^^^^^^^^^^^^^^^^
+
+-A Docker v2 repository is a collection of Blobs, Manifests, and Tags. Blobs are
+-the layers that together make up a Docker image. The Manifest is the metadata
+-that connects the Blobs together in the correct order, and it can also contain
+-other metadata such as signatures. A Manifest can be tagged in a repository, and
+-the Tag object is how this is accomplished in Pulp. So in short, a Tag
+-references one Manifest (by digest) and a Manifest references N Blobs
+-(also by digest).
++A Docker v2 repository is a collection of Blobs, Image Manifests, Manifest Lists
++and Tags. Blobs are the layers that together make up a Docker image. The Image
++Manifest is the metadata that connects the Blobs together in the correct order,
++and it can also contain other metadata such as signatures. A Manifest List is
++a list of Image manifests for one or more platforms. An Image Manifest or
++Manifest Listcan be tagged in a repository, and the Tag object is how this is
++accomplished in Pulp. So in short, a Tag references one Manifest(image or list)
++by digest same for a Image Manifest which references N Blobs (also by digest).
+
+ .. note::
+
+@@ -26,6 +27,7 @@ references one Manifest (by digest) and a Manifest references N Blobs
+     what Tag name, users should rely on the ``name`` and ``manifest_digest``
+     fields for Tag Units and not the Manifest ``tag`` field. In the Manifest v2
+     schema, the ``tag`` field has been removed.
++    Since 3.0 fields ``tag`` and ``name`` and removed completely from Manifest model.
+
+ Upload
+ ^^^^^^
+diff --git a/extensions_admin/pulp_docker/extensions/admin/content.py b/extensions_admin/pulp_docker/extensions/admin/content.py
+index 383f042..c9681a8 100644
+--- a/extensions_admin/pulp_docker/extensions/admin/content.py
++++ b/extensions_admin/pulp_docker/extensions/admin/content.py
+@@ -8,10 +8,13 @@
+
+
+ DESC_COPY_MANIFESTS = _('copies manifests from one repository into another')
++DESC_COPY_MANIFEST_LISTS = _('copies manifest lists from one repository into another')
+ DESC_COPY_TAGS = _('copies tags from one repository into another')
+ DESC_REMOVE_MANIFESTS = _('remove manifests from a repository')
++DESC_REMOVE_MANIFEST_LISTS = _('remove manifest lists from a repository')
+ DESC_REMOVE_TAGS = _('remove tags from a repository')
+ DESC_SEARCH_MANIFESTS = _('search for manifests in a repository')
++DESC_SEARCH_MANIFEST_LISTS = _('search for manifest lists in a repository')
+ DESC_SEARCH_TAGS = _('search for tags in a repository')
+ FORMAT_ERR = _('The docker formatter can not process %s units.')
+
+@@ -32,7 +35,7 @@ def get_formatter_for_type(type_id):
+     """
+     if type_id == constants.TAG_TYPE_ID:
+         return lambda u: TAG_TEMPLATE % u
+-    elif type_id in [constants.MANIFEST_TYPE_ID, constants.BLOB_TYPE_ID]:
++    elif type_id in [constants.MANIFEST_TYPE_ID, constants.MANIFEST_LIST_TYPE_ID, constants.BLOB_TYPE_ID]:
+         return lambda u: MANIFEST_AND_BLOB_TEMPLATE % u
+     else:
+         raise ValueError(FORMAT_ERR % type_id)
+@@ -162,6 +165,37 @@ def run(self, **kwargs):
+         self.prompt.render_document_list(manifests)
+
+
++class ManifestListSearchCommand(DisplayUnitAssociationsCommand):
++    """
++    Command used to search for manifest list units in a repository.
++    """
++
++    def __init__(self, context):
++        """
++        :param context: A client context.
++        :type  context: pulp.client.extensions.core.ClientContext
++        """
++        super(ManifestListSearchCommand, self).__init__(
++            name='manifest-list',
++            description=DESC_SEARCH_MANIFEST_LISTS,
++            method=self.run)
++        self.context = context
++        self.prompt = context.prompt
++
++    def run(self, **kwargs):
++        """
++        Print a list of all the manifest lists matching the search parameters.
++
++        :param kwargs: the search parameters for finding docker manifest lists
++        :type kwargs: dict
++        """
++        repo_id = kwargs.pop(options.OPTION_REPO_ID.keyword)
++        kwargs['type_ids'] = [constants.MANIFEST_LIST_TYPE_ID]
++        reply = self.context.server.repo_unit.search(repo_id, **kwargs)
++        manifest_lists = reply.response_body
++        self.prompt.render_document_list(manifest_lists)
++
++
+ class ManifestCopyCommand(UnitCopyCommand):
+     """
+     Command used to copy manifest units between repositories.
+@@ -193,6 +227,37 @@ def get_formatter_for_type(self, type_id):
+         return get_formatter_for_type(type_id)
+
+
++class ManifestListCopyCommand(UnitCopyCommand):
++    """
++    Command used to copy manifest list units between repositories.
++    """
++
++    def __init__(self, context):
++        """
++        :param context: A client context.
++        :type  context: pulp.client.extensions.core.ClientContext
++        """
++        super(ManifestListCopyCommand, self).__init__(
++            context,
++            name='manifest-list',
++            description=DESC_COPY_MANIFEST_LISTS,
++            method=self.run,
++            type_id=constants.MANIFEST_LIST_TYPE_ID)
++
++    def get_formatter_for_type(self, type_id):
++        """
++        Returns a formatter that can be used to format the unit key
++        of a docker manifest list for display purposes.
++
++        :param type_id: A unit type ID.
++        :type type_id: str
++        :return: A formatter.
++        :rtype: callable
++        :raises ValueError: when the type_id is not supported.
++        """
++        return get_formatter_for_type(type_id)
++
++
+ class ManifestRemoveCommand(UnitRemoveCommand):
+     """
+     Command used to remove manifest units from a repository.
+@@ -222,3 +287,36 @@ def get_formatter_for_type(self, type_id):
+         :raises ValueError: when the type_id is not supported.
+         """
+         return get_formatter_for_type(type_id)
++
++
++class ManifestListRemoveCommand(UnitRemoveCommand):
++    """
++    Command used to remove manifest list units from a repository.
++    """
++
++    def __init__(self, context):
++        """
++        :param context: A client context.
++        :type  context: pulp.client.extensions.core.ClientContext
++        """
++
++        super(ManifestListRemoveCommand, self).__init__(
++            name='manifest-list',
++            description=DESC_REMOVE_MANIFEST_LISTS,
++            context=context,
++            method=self.run,
++            type_id=constants.MANIFEST_LIST_TYPE_ID)
++
++    def get_formatter_for_type(self, type_id):
++        """
++        Returns a formatter that can be used to format the unit key
++        of a docker manifest list for display purposes.
++
++        :param type_id: A unit type ID.
++        :type type_id: str
++        :return: A formatter.
++        :rtype: callable
++        :raises ValueError: when the type_id is not supported.
++        """
++        return get_formatter_for_type(type_id)
++
+diff --git a/extensions_admin/pulp_docker/extensions/admin/pulp_cli.py b/extensions_admin/pulp_docker/extensions/admin/pulp_cli.py
+index 1ab980a..c5c1417 100644
+--- a/extensions_admin/pulp_docker/extensions/admin/pulp_cli.py
++++ b/extensions_admin/pulp_docker/extensions/admin/pulp_cli.py
+@@ -115,6 +115,7 @@ def add_search_section(context, parent_section):
+     section = parent_section.create_subsection(SECTION_SEARCH, DESC_SEARCH)
+     section.add_command(ImageSearchCommand(context))
+     section.add_command(content.ManifestSearchCommand(context))
++    section.add_command(content.ManifestListSearchCommand(context))
+     section.add_command(content.TagSearchCommand(context))
+     return section
+
+@@ -132,6 +133,7 @@ def add_copy_section(context, parent_section):
+     section = parent_section.create_subsection(SECTION_COPY, DESC_COPY)
+     section.add_command(ImageCopyCommand(context))
+     section.add_command(content.ManifestCopyCommand(context))
++    section.add_command(content.ManifestListCopyCommand(context))
+     section.add_command(content.TagCopyCommand(context))
+     return section
+
+@@ -149,6 +151,7 @@ def add_remove_section(context, parent_section):
+     section = parent_section.create_subsection(SECTION_REMOVE, DESC_REMOVE)
+     section.add_command(ImageRemoveCommand(context))
+     section.add_command(content.ManifestRemoveCommand(context))
++    section.add_command(content.ManifestListRemoveCommand(context))
+     section.add_command(content.TagRemoveCommand(context))
+     return section
+
+diff --git a/extensions_admin/pulp_docker/extensions/admin/upload.py b/extensions_admin/pulp_docker/extensions/admin/upload.py
+index 145562d..ceed9dc 100644
+--- a/extensions_admin/pulp_docker/extensions/admin/upload.py
++++ b/extensions_admin/pulp_docker/extensions/admin/upload.py
+@@ -16,8 +16,8 @@
+ d = _('name of the tag to create  or update')
+ TAG_NAME_OPTION = PulpCliOption('--tag-name', d)
+
+-d = _('digest of the manifest (e.g. sha256:3e006...)')
+-MANIFEST_DIGEST_OPTION = PulpCliOption('--manifest-digest', d)
++d = _('digest of the image manifest or manifest list (e.g. sha256:3e006...)')
++DIGEST_OPTION = PulpCliOption('--digest', d)
+
+ DESC_UPDATE_TAGS = _('create or update a tag to point to a manifest')
+
+@@ -86,7 +86,7 @@ def __init__(self, context):
+                                                upload_files=False,
+                                                description=DESC_UPDATE_TAGS)
+         self.add_option(TAG_NAME_OPTION)
+-        self.add_option(MANIFEST_DIGEST_OPTION)
++        self.add_option(DIGEST_OPTION)
+
+     def determine_type_id(self, filename, **kwargs):
+         """
+@@ -136,6 +136,6 @@ def generate_metadata(self, filename, **kwargs):
+         """
+
+         tag_name = kwargs[TAG_NAME_OPTION.keyword]
+-        digest = kwargs[MANIFEST_DIGEST_OPTION.keyword]
++        digest = kwargs[DIGEST_OPTION.keyword]
+
+         return {'name': tag_name, 'digest': digest}
+diff --git a/plugins/etc/httpd/conf.d/pulp_docker.conf b/plugins/etc/httpd/conf.d/pulp_docker.conf
+index dfa9ab2..26a526c 100644
+--- a/plugins/etc/httpd/conf.d/pulp_docker.conf
++++ b/plugins/etc/httpd/conf.d/pulp_docker.conf
+@@ -21,6 +21,13 @@ Alias /pulp/docker/v2 /var/www/pub/docker/v2/web
+     SSLRequireSSL
+     Options FollowSymlinks Indexes
+ </Directory>
++<Directory /var/www/pub/docker/v2/web/*/manifests/list>
++    Header set Docker-Distribution-API-Version "registry/2.0"
++    Header set Content-Type "application/vnd.docker.distribution.manifest.list.v2+json"
++    SSLRequireSSL
++    Options FollowSymlinks Indexes
++</Directory>
++
+
+ # Docker v1
+ Alias /pulp/docker/v1 /var/www/pub/docker/v1/web
+diff --git a/plugins/pulp_docker/plugins/distributors/publish_steps.py b/plugins/pulp_docker/plugins/distributors/publish_steps.py
+index b43edc5..021122c 100644
+--- a/plugins/pulp_docker/plugins/distributors/publish_steps.py
++++ b/plugins/pulp_docker/plugins/distributors/publish_steps.py
+@@ -111,7 +111,7 @@ def __init__(self, repo, publish_conduit, config, repo_content_unit_q=None):
+             step_type=constants.PUBLISH_STEP_WEB_PUBLISHER, repo=repo,
+             publish_conduit=publish_conduit, config=config)
+
+-        self.redirect_data = {1: set(), 2: set()}
++        self.redirect_data = {1: set(), 2: set(), 'list': set(), 'amd64': {}}
+
+         docker_api_version = 'v2'
+         publish_dir = configuration.get_web_publish_dir(repo, config, docker_api_version)
+@@ -131,6 +131,10 @@ def __init__(self, repo, publish_conduit, config, repo_content_unit_q=None):
+             self.redirect_data,
+             repo_content_unit_q=repo_content_unit_q)
+         self.add_child(self.publish_manifests_step)
++        self.publish_manifest_lists_step = PublishManifestListsStep(
++            self.redirect_data,
++            repo_content_unit_q=repo_content_unit_q)
++        self.add_child(self.publish_manifest_lists_step)
+         self.add_child(PublishTagsStep(self.redirect_data))
+         self.add_child(atomic_publish_step)
+         self.add_child(RedirectFileStep(app_publish_location, self.redirect_data))
+@@ -185,8 +189,8 @@ def __init__(self, redirect_data, repo_content_unit_q=None):
+         Initialize the PublishManifestsStep, setting its description and calling the super class's
+         __init__().
+
+-        :param redirect_data: Dictionary of tags and digests that manifests schema version 2
+-                              reference
++        :param redirect_data: Dictionary of tags and digests that image manifests schema version 2
++                              and manifest lists reference
+         :type  redirect_data: dict
+         :param repo_content_unit_q: optional Q object that will be applied to the queries performed
+                                     against RepoContentUnit model
+@@ -203,8 +207,8 @@ def process_main(self, item):
+         """
+         Link the item to the Manifest file.
+
+-        :param item: The Blob to process
+-        :type  item: pulp_docker.plugins.models.Blob
++        :param item: The Manifest to process
++        :type  item: pulp_docker.plugins.models.Manifest
+         """
+         misc.create_symlink(item._storage_path,
+                             os.path.join(self.get_manifests_directory(), str(item.schema_version),
+@@ -221,6 +225,59 @@ def get_manifests_directory(self):
+         return os.path.join(self.parent.get_working_dir(), 'manifests')
+
+
++class PublishManifestListsStep(publish_step.UnitModelPluginStep):
++    """
++    Publish ManifestLists.
++    """
++
++    def __init__(self, redirect_data, repo_content_unit_q=None):
++        """
++        Initialize the PublishManifestListsStep, setting its description and calling the super class's
++        __init__().
++
++        :param redirect_data: Dictionary of tags and digests that image manifests schema version 2
++                              and manifest lists reference
++        :type  redirect_data: dict
++        :param repo_content_unit_q: optional Q object that will be applied to the queries performed
++                                    against RepoContentUnit model
++        :type  repo_content_unit_q: mongoengine.Q
++
++        """
++        super(PublishManifestListsStep, self).__init__(step_type=constants.PUBLISH_STEP_MANIFEST_LISTS,
++                                                   model_classes=[models.ManifestList],
++                                                   repo_content_unit_q=repo_content_unit_q)
++        self.description = _('Publishing Manifest Lists.')
++        self.redirect_data = redirect_data
++
++    def process_main(self, item):
++        """
++        Link the item to the Manifest List file.
++
++        :param item: The Manifest List to process
++        :type  item: pulp_docker.plugins.models.ManifestList
++        """
++        misc.create_symlink(item._storage_path,
++                            os.path.join(self.get_manifests_directory(), constants.MANIFEST_LIST_TYPE,
++                                         item.unit_key['digest']))
++        self.redirect_data[constants.MANIFEST_LIST_TYPE].add(item.unit_key['digest'])
++        if item.amd64_digest:
++            # we query the tag collection because the manifest list model does not contain
++            # the tag field anymore
++            # Manifest list can have several tags
++            tags = models.Tag.objects.filter(manifest_digest=item.digest, repo_id=self.get_repo().id)
++            for tag in tags:
++                self.redirect_data['amd64'][tag.name] = (item.amd64_digest, item.amd64_schema_version)
++
++    def get_manifests_directory(self):
++        """
++        Get the directory where the Manifests published to the web should be linked.
++
++        :return: The path to where Manifests should be published.
++        :rtype:  basestring
++        """
++        return os.path.join(self.parent.get_working_dir(), 'manifests')
++
++
+ class PublishTagsStep(publish_step.UnitModelPluginStep):
+     """
+     Publish Tags.
+@@ -231,8 +288,8 @@ def __init__(self, redirect_data):
+         Initialize the PublishTagsStep, setting its description and calling the super class's
+         __init__().
+
+-        :param redirect_data: Dictionary of tags and digests that manifests schema version 2
+-                              reference
++        :param redirect_data: Dictionary of tags and digests that image manifests schema version 2
++                              and manifest lists reference
+         :type redirect_data: dict
+         """
+         super(PublishTagsStep, self).__init__(step_type=constants.PUBLISH_STEP_TAGS,
+@@ -249,13 +306,18 @@ def process_main(self, item):
+         :param item: The tag to process
+         :type  item: pulp_docker.plugins.models.Tag
+         """
+-        manifest = models.Manifest.objects.get(digest=item.manifest_digest)
++        try:
++            manifest = models.Manifest.objects.get(digest=item.manifest_digest)
++            schema_version = manifest.schema_version
++        except mongoengine.DoesNotExist:
++            manifest = models.ManifestList.objects.get(digest=item.manifest_digest)
++            schema_version = constants.MANIFEST_LIST_TYPE
+         misc.create_symlink(
+             manifest._storage_path,
+             os.path.join(self.parent.publish_manifests_step.get_manifests_directory(),
+-                         str(manifest.schema_version), item.name))
++                         str(schema_version), item.name))
+         self._tag_names.add(item.name)
+-        self.redirect_data[manifest.schema_version].add(item.name)
++        self.redirect_data[schema_version].add(item.name)
+
+     def finalize(self):
+         """
+@@ -284,8 +346,8 @@ def __init__(self, app_publish_location, redirect_data):
+                                      will generate.
+         :type  app_publish_location: basestring
+
+-        :param redirect_data: Dictionary of tags and digests that manifests schema version 2
+-                              reference
++        :param redirect_data: Dictionary of tags and digests that image manifests schema version 2
++                              and manifest lists reference
+         :type redirect_data:  dict
+
+         """
+@@ -300,12 +362,16 @@ def process_main(self):
+         registry = configuration.get_repo_registry_id(self.get_repo(), self.get_config())
+         redirect_url = configuration.get_redirect_url(self.get_config(), self.get_repo(), 'v2')
+         schema2_data = self.redirect_data[2]
++        manifest_list_data = self.redirect_data['list']
++        manifest_list_amd64 = self.redirect_data['amd64']
+
+         redirect_data = {
+-            'type': 'pulp-docker-redirect', 'version': 3, 'repository': self.get_repo().id,
++            'type': 'pulp-docker-redirect', 'version': 4, 'repository': self.get_repo().id,
+             'repo-registry-id': registry, 'url': redirect_url,
+             'protected': self.get_config().get('protected', False),
+-            'schema2_data': list(schema2_data)}
++            'schema2_data': list(schema2_data),
++            'manifest_list_data': list(manifest_list_data),
++            'manifest_list_amd64_tags': manifest_list_amd64}
+
+         misc.mkdir(os.path.dirname(self.app_publish_location))
+         with open(self.app_publish_location, 'w') as app_file:
+@@ -348,12 +414,18 @@ def process_main(self, item=None):
+         :param item: The tag to process
+         :type  item: pulp_docker.plugins.models.Tag
+         """
+-        manifest = models.Manifest.objects.get(digest=item.manifest_digest)
++        #TODO check if rsync works
++        try:
++            manifest = models.Manifest.objects.get(digest=item.manifest_digest)
++            schema_version = str(manifest.schema_version)
++        except mongoengine.DoesNotExist:
++            manifest = models.ManifestList.objects.get(digest=item.manifest_digest)
++            schema_version = constants.MANIFEST_LIST_TYPE
+         filename = item.name
+         symlink = self.make_link_unit(manifest, filename, self.get_working_dir(),
+                                       self.remote_repo_path,
+                                       self.get_config().get("remote")["root"],
+-                                      self.published_unit_path + [str(manifest.schema_version)])
++                                      self.published_unit_path + [schema_version])
+         self.parent.symlink_list.append(symlink)
+         self._tag_names.add(item.name)
+
+@@ -375,9 +447,9 @@ def finalize(self):
+ class DockerRsyncPublisher(Publisher):
+
+     REPO_CONTENT_TYPES = (constants.IMAGE_TYPE_ID, constants.BLOB_TYPE_ID,
+-                          constants.MANIFEST_TYPE_ID)
++                          constants.MANIFEST_TYPE_ID, constants.MANIFEST_LIST_TYPE_ID)
+
+-    REPO_CONTENT_MODELS = (models.Blob, models.Manifest, models.Image)
++    REPO_CONTENT_MODELS = (models.Blob, models.Manifest, models.ManifestList, models.Image)
+
+     def _get_postdistributor(self):
+         """
+@@ -419,6 +491,7 @@ def _add_necesary_steps(self, date_filter=None, config=None):
+
+         unit_models = {constants.IMAGE_TYPE_ID: models.Image,
+                        constants.MANIFEST_TYPE_ID: models.Manifest,
++                       constants.MANIFEST_LIST_TYPE_ID: models.ManifestList,
+                        constants.BLOB_TYPE_ID: models.Blob}
+
+         for unit_type in DockerRsyncPublisher.REPO_CONTENT_TYPES:
+diff --git a/plugins/pulp_docker/plugins/importers/importer.py b/plugins/pulp_docker/plugins/importers/importer.py
+index e75acbf..81f4c5e 100644
+--- a/plugins/pulp_docker/plugins/importers/importer.py
++++ b/plugins/pulp_docker/plugins/importers/importer.py
+@@ -47,7 +47,7 @@ def metadata(cls):
+             'id': constants.IMPORTER_TYPE_ID,
+             'display_name': _('Docker Importer'),
+             'types': [constants.BLOB_TYPE_ID, constants.IMAGE_TYPE_ID, constants.MANIFEST_TYPE_ID,
+-                      constants.TAG_TYPE_ID]
++                      constants.MANIFEST_LIST_TYPE_ID, constants.TAG_TYPE_ID]
+         }
+
+     def sync_repo(self, repo, sync_conduit, config):
+@@ -185,13 +185,14 @@ def import_units(self, source_repo, dest_repo, import_conduit, config, units=Non
+         if units is None:
+             criteria = UnitAssociationCriteria(
+                 type_ids=[constants.IMAGE_TYPE_ID, constants.TAG_TYPE_ID,
+-                          constants.MANIFEST_TYPE_ID, constants.BLOB_TYPE_ID])
++                          constants.MANIFEST_TYPE_ID, constants.MANIFEST_LIST_TYPE_ID, constants.BLOB_TYPE_ID])
+             units = import_conduit.get_source_units(criteria=criteria)
+
+         unit_importers = {
+             models.Image: DockerImporter._import_image,
+             models.Tag: DockerImporter._import_tag,
+             models.Manifest: DockerImporter._import_manifest,
++            models.ManifestList: DockerImporter._import_manifest_list,
+             models.Blob: DockerImporter._import_blob
+         }
+
+@@ -246,7 +247,7 @@ def _import_image(conduit, unit, dest_repo):
+     @staticmethod
+     def _import_tag(conduit, unit, dest_repo):
+         """
+-        Import a Tag, and the Manifests and Blobs it references.
++        Import a Tag, and the Manifests(image manifests and manifest lists) and Blobs it references.
+
+         :param conduit:   provides access to relevant Pulp functionality
+         :type  conduit:   pulp.plugins.conduits.unit_import.ImportUnitConduit
+@@ -267,15 +268,22 @@ def _import_tag(conduit, unit, dest_repo):
+         manifest_digests_to_import = set()
+         tag = models.Tag.objects.tag_manifest(repo_id=dest_repo.repo_id, tag_name=unit.name,
+                                               manifest_digest=unit.manifest_digest,
+-                                              schema_version=unit.schema_version)
++                                              schema_version=unit.schema_version,
++                                              manifest_type=unit.manifest_type)
+         units_added.add(tag)
+         conduit.associate_unit(tag)
+         manifest_digests_to_import.add(unit.manifest_digest)
+
+-        # Add referenced manifests
+-        for manifest in models.Manifest.objects.filter(
+-                digest__in=sorted(manifest_digests_to_import)):
+-            units_added |= set(DockerImporter._import_manifest(conduit, manifest, dest_repo))
++        if tag.manifest_type == constants.MANIFEST_LIST_TYPE:
++            # Add referenced manifest lists
++            for manifest in models.ManifestList.objects.filter(
++                    digest__in=sorted(manifest_digests_to_import)):
++                units_added |= set(DockerImporter._import_manifest_list(conduit, manifest, dest_repo))
++        else:
++            # Add referenced manifests
++            for manifest in models.Manifest.objects.filter(
++                    digest__in=sorted(manifest_digests_to_import)):
++                units_added |= set(DockerImporter._import_manifest(conduit, manifest, dest_repo))
+
+         return list(units_added)
+
+@@ -295,10 +303,8 @@ def _import_manifest(conduit, unit, dest_repo):
+         """
+         units_added = set()
+
+-        # Add manifests and catalog referenced blobs
++        # Collect referenced blobs
+         blob_digests = set()
+-        repository.associate_single_unit(dest_repo, unit)
+-        units_added.add(unit)
+         for layer in unit.fs_layers:
+             blob_digests.add(layer.blob_sum)
+
+@@ -310,9 +316,49 @@ def _import_manifest(conduit, unit, dest_repo):
+         for blob in models.Blob.objects.filter(digest__in=sorted(blob_digests)):
+             units_added |= set(DockerImporter._import_blob(conduit, blob, dest_repo))
+
++        # Add manifests
++        repository.associate_single_unit(dest_repo, unit)
++        units_added.add(unit)
++
+         return units_added
+
+     @staticmethod
++    def _import_manifest_list(conduit, unit, dest_repo):
++        """
++        Import a Manifest List and its referenced image manifests.
++
++        :param conduit:   provides access to relevant Pulp functionality
++        :type  conduit:   pulp.plugins.conduits.unit_import.ImportUnitConduit
++        :param unit:      The Manifest List to import
++        :type  unit:      pulp_docker.plugins.Model.ManifestList
++        :param dest_repo: The destination repository that the ManifestList is being imported to.
++        :type  dest_repo: pulp.server.db.model.Repository
++        :return:          list of Units that were copied to the destination repository
++        :rtype:           list
++        """
++
++        units_added = set()
++
++        # Collect referenced manifests
++        manifest_digests = set()
++        for manifest in unit.manifests:
++            manifest_digests.add(manifest)
++
++        if unit.amd64_digest:
++            manifest_digests.add(unit.amd64_digest)
++
++        # Add referenced manifests
++        for manifest in models.Manifest.objects.filter(digest__in=sorted(manifest_digests)):
++            units_added |= set(DockerImporter._import_manifest(conduit, manifest, dest_repo))
++
++        # Add manifest lists
++        repository.associate_single_unit(dest_repo, unit)
++        units_added.add(unit)
++
++        return units_added
++
++
++    @staticmethod
+     def _import_blob(conduit, unit, dest_repo):
+         """
+         Import a Blob.
+@@ -339,8 +385,9 @@ def remove_units(self, repo, units, config):
+         """
+         Removes content units from the given repository.
+
+-        This method also removes tags associated with Images, Tags associated with Manifests, and
+-        unreferenced Blobs associated with Manifests.
++        This method also removes tags associated with Images, Tags associated with Manifests,
++        unreferenced Blobs associated with Image Manifests, unreferenced Image Manifests
++        associated with Manifest Lists.
+
+         This call will not result in the units being deleted from Pulp itself, except for Tags since
+         they are repository specific.
+@@ -355,7 +402,8 @@ def remove_units(self, repo, units, config):
+         """
+         unit_removers = {
+             models.Image: DockerImporter._remove_image,
+-            models.Manifest: DockerImporter._remove_manifest
++            models.Manifest: DockerImporter._remove_manifest,
++            models.ManifestList: DockerImporter._remove_manifest_list
+         }
+
+         map((lambda u: type(u) in unit_removers and unit_removers[type(u)](
+@@ -392,16 +440,86 @@ def _remove_manifest(cls, repo, manifest):
+         cls._purge_unlinked_tags(repo, manifest)
+         cls._purge_unlinked_blobs(repo, manifest)
+
++    @classmethod
++    def _remove_manifest_list(cls, repo, manifest_list):
++        """
++        Purge Tags and image manifests associated with a given ManifestList in the repository.
++
++        :param repo:     The affected repository.
++        :type  repo:     pulp.server.db.model.Repository
++        :param manifest_list: The ManifestList being removed
++        :type  manifest_list: pulp_docker.plugins.models.ManifestList
++        """
++        cls._purge_unlinked_tags(repo, manifest_list)
++        cls._purge_unlinked_manifests(repo, manifest_list)
++
++    @staticmethod
++    def _purge_unlinked_manifests(repo, manifest_list):
++
++        # Find manifest digests referenced by removed manifest lists (orphaned)
++        orphaned = set()
++        for image_man in manifest_list.manifests:
++            orphaned.add(image_man)
++            if manifest_list.amd64_digest:
++                orphaned.add(manifest_list.amd64_digest)
++        if not orphaned:
++            # nothing orphaned
++            return
++
++        # Find manifest digests still referenced by other manifest lists (adopted)
++        adopted = set()
++        criteria = UnitAssociationCriteria(type_ids=[constants.MANIFEST_LIST_TYPE_ID],
++                                           unit_filters={'digest': {'$ne': manifest_list.digest}})
++        for man_list in unit_association.RepoUnitAssociationManager._units_from_criteria(
++                repo, criteria):
++            for image_man in man_list.manifests:
++                adopted.add(image_man)
++            if man_list.amd64_digest:
++                adopted.add(man_list.amd64_digest)
++
++        # Remove unreferenced manifests
++        orphaned = orphaned.difference(adopted)
++        if not orphaned:
++            # all adopted
++            return
++
++        # Check if those manifests have tags, tagged manifests cannot be removed
++        criteria = UnitAssociationCriteria(type_ids=[constants.TAG_TYPE_ID],
++                                           unit_filters={'manifest_digest': {'$in': list(orphaned)},
++                                                         'manifest_type': constants.MANIFEST_IMAGE_TYPE})
++        for tag in unit_association.RepoUnitAssociationManager._units_from_criteria(
++                repo, criteria):
++            orphaned.remove(tag.manifest_digest)
++
++        unit_filter = {
++            'digest': {
++                '$in': sorted(orphaned)
++            }
++        }
++
++        criteria = UnitAssociationCriteria(
++            type_ids=[constants.MANIFEST_TYPE_ID],
++            unit_filters=unit_filter)
++        manager = manager_factory.repo_unit_association_manager()
++        manager.unassociate_by_criteria(
++            repo_id=repo.repo_id,
++            criteria=criteria,
++            notify_plugins=False)
++
++        for manifest in models.Manifest.objects.filter(digest__in=sorted(orphaned)):
++            DockerImporter._purge_unlinked_blobs(repo, manifest)
++
++
+     @staticmethod
+     def _purge_unlinked_tags(repo, manifest):
+         """
+-        Purge Tags associated with the given Manifest in the repository. We don't want to leave Tags
+-        that reference Manifests that no longer exist.
++        Purge Tags associated with the given Manifest (image or list) in the repository.
++        We don't want to leave Tags that reference Manifests (image or lists) that no longer exist.
+
+         :param repo:     The affected repository.
+         :type  repo:     pulp.server.db.model.Repository
+-        :param manifest: The Manifest that is being removed
+-        :type  manifest: pulp_docker.plugins.models.Manifest
++        :param manifest: The Manifest(image or list) that is being removed
++        :type  manifest: pulp_docker.plugins.models.Manifest/ManifestList
+         """
+         # Find Tag objects that reference the removed Manifest. We can remove any such Tags from
+         # the repository, and from Pulp as well (since Tag objects are repository specific).
+diff --git a/plugins/pulp_docker/plugins/importers/sync.py b/plugins/pulp_docker/plugins/importers/sync.py
+index 6cc4565..0d54e21 100644
+--- a/plugins/pulp_docker/plugins/importers/sync.py
++++ b/plugins/pulp_docker/plugins/importers/sync.py
+@@ -226,21 +226,57 @@ def process_main(self):
+         # only want to download each layer once.
+         available_blobs = set()
+         self.total_units = len(available_tags)
+-        upstream_name = self.config.get('upstream_name')
++        man_list = 'application/vnd.docker.distribution.manifest.list.v2+json'
+         for tag in available_tags:
+             manifests = self.parent.index_repository.get_manifest(tag)
+             for manifest in manifests:
+-                manifest, digest = manifest
+-                manifest = self._process_manifest(manifest, digest, tag, upstream_name,
+-                                                  available_blobs)
+-                if manifest.config_layer:
+-                    available_blobs.add(manifest.config_layer)
+-                self.progress_successes += 1
++                manifest, digest, content_type = manifest
++                if content_type == man_list:
++                    self._process_manifest_list(manifest, digest, available_blobs, tag)
++                else:
++                    self._process_manifest(manifest, digest, available_blobs, tag)
+         # Update the available units with the Manifests and Blobs we learned about
+         available_blobs = [models.Blob(digest=d) for d in available_blobs]
+         self.parent.available_blobs.extend(available_blobs)
+
+-    def _process_manifest(self, manifest, digest, tag, upstream_name, available_blobs):
++    def _process_manifest_list(self, manifest_list, digest, available_blobs, tag):
++        """
++        Process manifest list.
++
++        :param manifest_list: manifest list details
++        :type  manifest_list: basestring
++        :param digest: Digest of the manifest list to be processed
++        :type digest: basesting
++        :param available_blobs: set of current available blobs accumulated dusring sync
++        :type available_blobs: set
++        :param tag: Tag which the manifest references
++        :type tag: basestring
++
++
++        :return: An initialized Manifest List object
++        :rtype: pulp_docker.plugins.models.ManifestList
++
++        """
++
++        # Save the manifest list to the working directory
++        with open(os.path.join(self.get_working_dir(), digest), 'w') as manifest_file:
++            manifest_file.write(manifest_list)
++        manifest_list = models.ManifestList.from_json(manifest_list, digest)
++        self.parent.available_manifests.append(manifest_list)
++        for image_man in manifest_list.manifests:
++            manifests = self.parent.index_repository.get_manifest(image_man, headers=False)
++            manifest, digest, _ = manifests[0]
++            self._process_manifest(manifest, digest, available_blobs, tag=None)
++        if manifest_list.amd64_digest and manifest_list.amd64_schema_version == 2:
++            # we set the headers to False in order to get the conversion to schema1
++            manifests = self.parent.index_repository.get_manifest(tag, headers=False)
++            manifest, digest, _ = manifests[0]
++            self._process_manifest(manifest, digest, available_blobs, tag=tag)
++        # Remember this tag for the SaveTagsStep.
++        self.parent.save_tags_step.tagged_manifests.append((tag, manifest_list, constants.MANIFEST_LIST_TYPE))
++        self.progress_successes += 1
++
++    def _process_manifest(self, manifest, digest, available_blobs, tag=None):
+         """
+         Process manifest.
+
+@@ -250,8 +286,6 @@ def _process_manifest(self, manifest, digest, tag, upstream_name, available_blob
+         :type digest: basesting
+         :param tag: Tag which the manifest references
+         :type tag: basestring
+-        :param upstream_name: Upstream name of the repository
+-        :type upstream_name: basestring
+         :param available_blobs: set of current available blobs accumulated dusring sync
+         :type available_blobs: set
+
+@@ -263,14 +297,16 @@ def _process_manifest(self, manifest, digest, tag, upstream_name, available_blob
+         # Save the manifest to the working directory
+         with open(os.path.join(self.get_working_dir(), digest), 'w') as manifest_file:
+             manifest_file.write(manifest)
+-        manifest = models.Manifest.from_json(manifest, digest, tag, upstream_name)
++        manifest = models.Manifest.from_json(manifest, digest)
+         self.parent.available_manifests.append(manifest)
+         for layer in manifest.fs_layers:
+             available_blobs.add(layer.blob_sum)
++        if manifest.config_layer:
++            available_blobs.add(manifest.config_layer)
++        self.progress_successes += 1
+         # Remember this tag for the SaveTagsStep.
+-        self.parent.save_tags_step.tagged_manifests.append((tag, manifest))
+-
+-        return manifest
++        if tag:
++            self.parent.save_tags_step.tagged_manifests.append((tag, manifest, constants.MANIFEST_IMAGE_TYPE))
+
+
+ class SaveUnitsStep(publish_step.SaveUnitsStep):
+@@ -333,10 +369,10 @@ def process_main(self):
+         it, and if that fails we'll fall back to updating the existing one.
+         """
+         self.total_units = len(self.tagged_manifests)
+-        for tag, manifest in self.tagged_manifests:
++        for tag, manifest, manifest_type in self.tagged_manifests:
+             new_tag = models.Tag.objects.tag_manifest(repo_id=self.get_repo().repo_obj.repo_id,
+                                                       tag_name=tag, manifest_digest=manifest.digest,
+-                                                      schema_version=manifest.schema_version)
++                                                      schema_version=manifest.schema_version, manifest_type=manifest_type)
+             if new_tag:
+                 repository.associate_single_unit(self.get_repo().repo_obj, new_tag)
+                 self.progress_successes += 1
+diff --git a/plugins/pulp_docker/plugins/importers/upload.py b/plugins/pulp_docker/plugins/importers/upload.py
+index f5e549f..7fb83cf 100644
+--- a/plugins/pulp_docker/plugins/importers/upload.py
++++ b/plugins/pulp_docker/plugins/importers/upload.py
+@@ -218,16 +218,30 @@ def process_main(self, item=None):
+         manifest_type_id = models.Manifest._content_type_id.default
+         repo_manifest_ids = repository.get_associated_unit_ids(repo_id, manifest_type_id)
+
+-        # check if there is manifest with such id within the queried rpeo
+-        manifest = models.Manifest.objects.filter(digest=digest, id__in=repo_manifest_ids)
+-        if manifest.count() == 0:
+-            raise PulpCodedValidationException(error_code=error_codes.DKR1010,
+-                                               digest=digest,
+-                                               repo_id=repo_id)
++        # check if there is manifest with such id within the queried repo
++        # since we don't know if the provided digest is of an image manifest or manifest list
++        # we first need to try both
++        #TODO
++        # BTW i do not really like this approach so suggestions are welcome
++        # but i would prefert to do more jon on the server side then ask form the user
++        # details which does not make sense to provide, like if he is providing image manifest
++        # or manifest list becaues he already provide the digest whichi s unique identifier.
++        manifests = models.Manifest.objects.filter(digest=digest, id__in=repo_manifest_ids)
++        manifest_type = 'image'
++        if manifests.count() == 0:
++            manifest_list_type_id = models.ManifestList._content_type_id.default
++            repo_manifest_list__ids = repository.get_associated_unit_ids(repo_id, manifest_list_type_id)
++            manifests = models.ManifestList.objects.filter(digest=digest, id__in=repo_manifest_list__ids)
++            manifest_type = 'list'
++            if manifests.count() == 0:
++                raise PulpCodedValidationException(error_code=error_codes.DKR1010,
++                                                   digest=digest,
++                                                   repo_id=repo_id)
+
+         new_tag = models.Tag.objects.tag_manifest(repo_id=self.parent.repo.id, tag_name=tag,
+                                                   manifest_digest=digest,
+-                                                  schema_version=manifest[0].schema_version)
++                                                  schema_version=manifests[0].schema_version,
++                                                  manifest_type=manifest_type)
+
+         if new_tag:
+             repository.associate_single_unit(self.parent.repo.repo_obj, new_tag)
+diff --git a/plugins/pulp_docker/plugins/migrations/0004_tag_schema_change.py b/plugins/pulp_docker/plugins/migrations/0004_tag_schema_change.py
+new file mode 100644
+index 0000000..781009e
+--- /dev/null
++++ b/plugins/pulp_docker/plugins/migrations/0004_tag_schema_change.py
+@@ -0,0 +1,18 @@
++from pulp.server.db.connection import get_collection
++
++
++def migrate(*args, **kwargs):
++    """
++    Add manifest_type to the tag collection.
++    """
++    image = 'image'
++    manifest_type_key = 'manifest_type'
++    collection = get_collection('units_docker_tag')
++    # drop old index due to unit_keys fields change
++    index_info = collection.index_information()
++    old_index = 'name_1_repo_id_1_schema_version_1'
++    if old_index in index_info:
++        collection.drop_index(old_index)
++    # update collection with new field
++    collection.update({manifest_type_key: {'$exists': False}},
++                      {'$set': {manifest_type_key: image}}, multi=True)
+diff --git a/plugins/pulp_docker/plugins/migrations/0005_remove_manifest_unused_fields.py b/plugins/pulp_docker/plugins/migrations/0005_remove_manifest_unused_fields.py
+new file mode 100644
+index 0000000..b2b657b
+--- /dev/null
++++ b/plugins/pulp_docker/plugins/migrations/0005_remove_manifest_unused_fields.py
+@@ -0,0 +1,17 @@
++from pulp.server.db.connection import get_collection
++
++
++def migrate(*args, **kwargs):
++    """
++    Remove tag and name fields from manifest collection.
++    """
++
++    tag = 'tag'
++    name = 'name'
++    collection = get_collection('units_docker_manifest')
++    collection.update({tag: {"$exists": True}},
++        {"$unset": {tag: True}},
++        multi=True)
++    collection.update({name: {"$exists": True}},
++        {"$unset": {name: True}},
++        multi=True)
+diff --git a/plugins/pulp_docker/plugins/models.py b/plugins/pulp_docker/plugins/models.py
+index efdbaf5..fb50492 100644
+--- a/plugins/pulp_docker/plugins/models.py
++++ b/plugins/pulp_docker/plugins/models.py
+@@ -84,30 +84,11 @@ class FSLayer(mongoengine.EmbeddedDocument):
+     blob_sum = mongoengine.StringField(required=True)
+
+
+-class Manifest(pulp_models.FileContentUnit):
+-    """
+-    This model represents a Docker v2, Schema 1 Image Manifest, as described here:
+-
+-    https://github.com/docker/distribution/blob/release/2.0/docs/spec/manifest-v2-1.md
+-    """
+-    digest = mongoengine.StringField(required=True)
+-    name = mongoengine.StringField(required=True)
+-    tag = mongoengine.StringField()
+-    schema_version = mongoengine.IntField(required=True)
+-    fs_layers = mongoengine.ListField(field=mongoengine.EmbeddedDocumentField(FSLayer),
+-                                      required=True)
+-    config_layer = mongoengine.StringField()
++class UnitMixin(object):
+
+-    # For backward compatibility
+-    _ns = mongoengine.StringField(
+-        default='units_{type_id}'.format(type_id=constants.MANIFEST_TYPE_ID))
+-    _content_type_id = mongoengine.StringField(required=True, default=constants.MANIFEST_TYPE_ID)
+-
+-    unit_key_fields = ('digest',)
+-
+-    meta = {'collection': 'units_{type_id}'.format(type_id=constants.MANIFEST_TYPE_ID),
+-            'indexes': ['name', 'tag'],
+-            'allow_inheritance': False}
++    meta = {
++        'abstract': True,
++    }
+
+     @staticmethod
+     def calculate_digest(manifest, algorithm='sha256'):
+@@ -135,7 +116,7 @@ def calculate_digest(manifest, algorithm='sha256'):
+             # digest.
+             protected = decoded_manifest['signatures'][0]['protected']
+             # Add back the missing padding to the protected block so that it is valid base64.
+-            protected = Manifest._pad_unpadded_b64(protected)
++            protected = UnitMixin._pad_unpadded_b64(protected)
+             # Now let's decode the base64 and load it as a dictionary so we can get the length
+             protected = base64.b64decode(protected)
+             protected = json.loads(protected)
+@@ -147,7 +128,7 @@ def calculate_digest(manifest, algorithm='sha256'):
+             # trimmed Manifest to get the correct digest. We'll do this as a one liner since it is
+             # a very similar process to what we've just done above to get the protected block
+             # decoded.
+-            signed_tail = base64.b64decode(Manifest._pad_unpadded_b64(protected['formatTail']))
++            signed_tail = base64.b64decode(UnitMixin._pad_unpadded_b64(protected['formatTail']))
+             # Now we can reconstruct the original Manifest that the digest should be based on.
+             manifest = manifest[:signed_length] + signed_tail
+         hasher = getattr(hashlib, algorithm)
+@@ -180,8 +161,40 @@ def _pad_unpadded_b64(unpadded_b64):
+         paddings = {0: '', 2: '==', 3: '='}
+         return unpadded_b64 + paddings[len(unpadded_b64) % 4]
+
++    def get_symlink_name(self):
++        """
++        Provides the name that should be used when creating a symlink.
++        :return: file name as it appears in a published repository
++        :rtype: str
++        """
++        return '/'.join(('manifests', str(self.schema_version), self.digest))
++
++
++class Manifest(pulp_models.FileContentUnit, UnitMixin):
++    """
++    This model represents a Docker v2, Schema 1 Image Manifest and Schema 2 Image Manifest.
++
++    https://github.com/docker/distribution/blob/release/2.0/docs/spec/manifest-v2-1.md
++    https://github.com/docker/distribution/blob/release/2.3/docs/spec/manifest-v2-2.md#image-manifest
++    """
++    digest = mongoengine.StringField(required=True)
++    schema_version = mongoengine.IntField(required=True)
++    fs_layers = mongoengine.ListField(field=mongoengine.EmbeddedDocumentField(FSLayer),
++                                      required=True)
++    config_layer = mongoengine.StringField()
++
++    # For backward compatibility
++    _ns = mongoengine.StringField(
++        default='units_{type_id}'.format(type_id=constants.MANIFEST_TYPE_ID))
++    _content_type_id = mongoengine.StringField(required=True, default=constants.MANIFEST_TYPE_ID)
++
++    unit_key_fields = ('digest',)
++    meta = {'collection': 'units_{type_id}'.format(type_id=constants.MANIFEST_TYPE_ID),
++            'indexes': [],
++            'allow_inheritance': False}
++
+     @classmethod
+-    def from_json(cls, manifest_json, digest, tag, upstream_name):
++    def from_json(cls, manifest_json, digest):
+         """
+         Construct and return a DockerManifest from the given JSON document.
+
+@@ -191,17 +204,10 @@ def from_json(cls, manifest_json, digest, tag, upstream_name):
+         :param digest:        The content digest of the manifest, as described at
+                               https://docs.docker.com/registry/spec/api/#content-digests
+         :type  digest:        basestring
+-        :param tag:           Tag of the image repository
+-        :type  tag:           basestring
+-        :param upstream_name: Name of the upstream repository
+-        :type  upstream_name: basestring
+
+         :return:              An initialized DockerManifest object
+         :rtype:               pulp_docker.common.models.DockerManifest
+         """
+-        # manifest schema version 2 does not contain tag and name information
+-        # we need to retrieve them from other sources, that's why there were added 2 more
+-        # parameters in this method
+         manifest = json.loads(manifest_json)
+         config_layer = None
+         try:
+@@ -209,24 +215,86 @@ def from_json(cls, manifest_json, digest, tag, upstream_name):
+             config_layer = manifest['config']['digest']
+         except KeyError:
+             fs_layers = [FSLayer(blob_sum=layer['blobSum']) for layer in manifest['fsLayers']]
+-        return cls(digest=digest, name=upstream_name, tag=tag,
+-                   schema_version=manifest['schemaVersion'], fs_layers=fs_layers,
++        return cls(digest=digest, schema_version=manifest['schemaVersion'], fs_layers=fs_layers,
+                    config_layer=config_layer)
+
++
++class ManifestList(pulp_models.FileContentUnit, UnitMixin):
++    """
++    This model represents a Docker v2, Schema 2 Manifest list, as described here:
++
++    https://github.com/docker/distribution/blob/release/2.3/docs/spec/manifest-v2-2.md#manifest-list
++    """
++    digest = mongoengine.StringField(required=True)
++    schema_version = mongoengine.IntField(required=True)
++    manifests = mongoengine.ListField(mongoengine.StringField(), required=True)
++    amd64_digest = mongoengine.StringField()
++    amd64_schema_version = mongoengine.IntField()
++
++    # For backward compatibility
++    _ns = mongoengine.StringField(
++        default='units_{type_id}'.format(type_id=constants.MANIFEST_LIST_TYPE_ID))
++    _content_type_id = mongoengine.StringField(required=True, default=constants.MANIFEST_LIST_TYPE_ID)
++
++    unit_key_fields = ('digest',)
++
++    meta = {'collection': 'units_{type_id}'.format(type_id=constants.MANIFEST_LIST_TYPE_ID),
++            'indexes': [],
++            'allow_inheritance': False}
++
++    @classmethod
++    def from_json(cls, manifest_json, digest):
++        """
++        Construct and return a DockerManifestList from the given JSON document.
++
++        :param manifest_json: A JSON document describing a DockerManifest object as defined by the
++                              Docker v2, Schema 2 Manifest List documentation.
++        :type  manifest_json: basestring
++        :param digest:        The content digest of the manifest, as described at
++                              https://docs.docker.com/registry/spec/api/#content-digests
++        :type  digest:        basestring
++
++        :return:              An initialized DockerManifestList object
++        :rtype:               pulp_docker.common.models.DockerManifest
++        """
++
++        mediatype = 'application/vnd.docker.distribution.manifest.v2+json'
++        manifest = json.loads(manifest_json)
++        # we will store here the digests of image manifests that manifest list contains
++        manifests = []
++        amd64_digest = None
++        amd64_schema_version = None
++        for image_man in manifest['manifests']:
++            manifests.append(image_man['digest'])
++            # we need to store separately the digest for the amd64 linux image manifest for later
++            # conversion. There can be several image manifests that would match the ^ criteria but
++            # we would keep just the first occurence.
++            if image_man['platform']['architecture'] == 'amd64' and image_man['platform']['os'] == 'linux' and not amd64_digest:
++                amd64_digest = image_man['digest']
++                if image_man['mediaType']== mediatype:
++                    amd64_schema_version = 2
++                else:
++                    amd64_schema_version = 1
++
++        return cls(digest=digest, schema_version=manifest['schemaVersion'], manifests=manifests,
++                   amd64_digest=amd64_digest,
++                   amd64_schema_version=amd64_schema_version)
++
+     def get_symlink_name(self):
+         """
+         Provides the name that should be used when creating a symlink.
+         :return: file name as it appears in a published repository
+         :rtype: str
+         """
+-        return '/'.join(('manifests', str(self.schema_version), self.digest))
++        return '/'.join(('manifests', 'list', self.digest))
++
+
+
+ class TagQuerySet(querysets.QuerySetPreventCache):
+     """
+     This is a custom QuerySet for the Tag model that allows it to have some custom behavior.
+     """
+-    def tag_manifest(self, repo_id, tag_name, manifest_digest, schema_version):
++    def tag_manifest(self, repo_id, tag_name, manifest_digest, schema_version, manifest_type):
+         """
+         Tag a Manifest in a repository by trying to create a Tag object with the given tag_name and
+         repo_id referencing the given Manifest digest. Tag objects have a uniqueness constraint on
+@@ -243,18 +311,20 @@ def tag_manifest(self, repo_id, tag_name, manifest_digest, schema_version):
+         :type  manifest_digest: basestring
+         :param schema_version:  The schema version  of the Manifest that is being tagged
+         :type  schema_version:  int
++        :param manifest_type:  image manifest or manifest list type
++        :type  manifest_type:  basestring
+         :return:                If a new Tag is created it is returned. Otherwise None is returned.
+         :rtype:                 Either a pulp_docker.plugins.models.Tag or None
+         """
+         try:
+             tag = Tag(name=tag_name, manifest_digest=manifest_digest, repo_id=repo_id,
+-                      schema_version=schema_version)
++                      schema_version=schema_version, manifest_type=manifest_type)
+             tag.save()
+         except mongoengine.NotUniqueError:
+             # There is already a Tag with the given name and repo_id, so let's just make sure it's
+             # digest is updated. No biggie.
+             # Let's check if the manifest_digest changed
+-            tag = Tag.objects.get(name=tag_name, repo_id=repo_id, schema_version=schema_version)
++            tag = Tag.objects.get(name=tag_name, repo_id=repo_id, schema_version=schema_version, manifest_type=manifest_type)
+             if tag.manifest_digest != manifest_digest:
+                 tag.manifest_digest = manifest_digest
+                 # we don't need to set _last_updated field because it is done with pre_save signal
+@@ -281,12 +351,13 @@ class Tag(pulp_models.ContentUnit):
+     # repository.
+     repo_id = mongoengine.StringField(required=True)
+     schema_version = mongoengine.IntField(required=True)
++    manifest_type = mongoengine.StringField(required=True)
+
+     # For backward compatibility
+     _ns = mongoengine.StringField(default='units_{type_id}'.format(type_id=constants.TAG_TYPE_ID))
+     _content_type_id = mongoengine.StringField(required=True, default=constants.TAG_TYPE_ID)
+
+-    unit_key_fields = ('name', 'repo_id', 'schema_version')
++    unit_key_fields = ('name', 'repo_id', 'schema_version', 'manifest_type')
+
+     # Pulp has a bug where it does not install a uniqueness constraint for us based on the
+     # unit_key_fields we defined above: https://pulp.plan.io/issues/1477
+diff --git a/plugins/pulp_docker/plugins/registry.py b/plugins/pulp_docker/plugins/registry.py
+index d804414..93d35f3 100644
+--- a/plugins/pulp_docker/plugins/registry.py
++++ b/plugins/pulp_docker/plugins/registry.py
+@@ -359,7 +359,7 @@ def create_blob_download_request(self, digest):
+         req = DownloadRequest(url, os.path.join(self.working_dir, digest))
+         return req
+
+-    def get_manifest(self, reference):
++    def get_manifest(self, reference, headers=True):
+         """
+         Get the manifest and its digest for the given reference.
+
+@@ -373,31 +373,46 @@ def get_manifest(self, reference):
+         content_type_header = 'content-type'
+         schema1 = 'application/vnd.docker.distribution.manifest.v1+json'
+         schema2 = 'application/vnd.docker.distribution.manifest.v2+json'
++        man_list = 'application/vnd.docker.distribution.manifest.list.v2+json'
+         path = self.MANIFEST_PATH.format(name=self.name, reference=reference)
+-        # set the headers for first request
+-        request_headers['Accept'] = schema2
++        # we need this check to skip the check of returned mediatype in case we pull
++        # the manifest by digest
++        if headers:
++            # set the headers for first request
++            request_headers['Accept'] = schema2
++            request_headers['Accept'] = man_list
+         response_headers, manifest = self._get_path(path, headers=request_headers)
+-        digest = self._digest_check(response_headers, manifest)
+-
++        # we need to disable here the digest check because of wrong digests registry returns
++        # https://github.com/docker/distribution/pull/2310
++        # we will just calculate it without camparing it to the value that registry has in the
++        # docker-content-digest response header
++        digest = models.UnitMixin.calculate_digest(manifest)
+         # add manifest and digest
+-        manifests.append((manifest, digest))
+-
+-        # we intentionally first asked schema version 2, because it might happen that
+-        # registry will have just schema version 1 and even if in request headers we
+-        # set schema version 2, registry will anyway return schema version 1
+-        # this way we will not make unecessary separate second request for schema version 1
+-        if response_headers.get(content_type_header) == schema2:
++        manifests.append((manifest, digest, response_headers.get(content_type_header)))
++
++        # since in accept headers we have man_list and schema2 mediatype, registry would return
++        # whether man list, schema2 or schema1.
++        # if it is schema1 we do not need to make any other requests
++        # if it is manifest list, we do not need to make any other requests, the converted type
++        # for older clients will be requested later during the manifest list process time
++        # if it is schema2 we need to ask schema1 for older clients.
++        if headers and response_headers.get(content_type_header) == schema2:
+             request_headers['Accept'] = schema1
+             response_headers, manifest = self._get_path(path, headers=request_headers)
+             digest = self._digest_check(response_headers, manifest)
+
+             # add manifest and digest
+-            manifests.append((manifest, digest))
++            manifests.append((manifest, digest, response_headers.get(content_type_header)))
+
+         # returned list will be whether:
+-        # [(S2, digest), (S1, digest)]
++        # [(S2, digest, content_type), (S1, digest, content_type)]
++        # or
++        # [(list, digest, content_type)]
+         # or
+-        # [(S1, digest)]
++        # [(S1, digest, content_type)]
++        # [(S2, digest, content_type)]
++        # note the tuple has a new entry content_type which we need later to process
++        # returned manifest mediatypes
+         return manifests
+
+     def _digest_check(self, headers, manifest):
+diff --git a/plugins/setup.py b/plugins/setup.py
+index a8dee80..0c6ca50 100755
+--- a/plugins/setup.py
++++ b/plugins/setup.py
+@@ -28,6 +28,7 @@
+             'docker_blob=pulp_docker.plugins.models:Blob',
+             'docker_image=pulp_docker.plugins.models:Image',
+             'docker_manifest=pulp_docker.plugins.models:Manifest',
++            'docker_manifest_list=pulp_docker.plugins.models:ManifestList',
+             'docker_tag=pulp_docker.plugins.models:Tag'
+         ]
+     }

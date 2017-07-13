@@ -1,0 +1,259 @@
+From fba49b6a8ce70804203e0472dfbf36bba4d21d12 Mon Sep 17 00:00:00 2001
+From: Vadim Rutkovsky <vrutkovs@redhat.com>
+Date: Mon, 8 Aug 2016 10:55:38 +0200
+Subject: [PATCH] Update to latest master
+
+---
+ crane/__init__.py                 |  2 +-
+ crane/app_util.py                 | 22 +++++++++++++++++++++-
+ crane/data.py                     |  3 ++-
+ crane/templates/layout.html       |  5 ++++-
+ crane/views/crane.py              | 22 ++++++++++++++++++++--
+ docs/conf.py                      |  5 ++---
+ docs/index.rst                    | 12 +++++++-----
+ tests/test_app_util.py            | 20 +++++++++++++++++++-
+ tests/views/test_repositories.py  | 27 +++++++++++++++++++++++++++
+ 10 files changed, 108 insertions(+), 16 deletions(-)
+
+diff --git a/crane/__init__.py b/crane/__init__.py
+index dd4e0ae..97955ba 100644
+--- a/crane/__init__.py
++++ b/crane/__init__.py
+@@ -1 +1 @@
+-version = '2.1'
++version = '2.2a1'
+diff --git a/crane/app_util.py b/crane/app_util.py
+index 6c5367e..3bdac6d 100644
+--- a/crane/app_util.py
++++ b/crane/app_util.py
+@@ -172,7 +172,7 @@ def get_repositories():
+     """
+     Get the current data used for processing requests from the flask request context
+     and format it to display basic information about image ids and tags associated
+-    with each repository.
++    with each v1 repository.
+
+     Value corresponding to each key(repo-registry-id) is a dictionary itself
+     with the following format:
+@@ -195,6 +195,26 @@ def get_repositories():
+     return relevant_repo_data
+
+
++def get_v2_repositories():
++    """
++    Get the current data used for processing requests from the flask request context
++    and format it to display basic information about v2 repository.
++
++    Value corresponding to each key(repo-registry-id) is a dictionary itself
++    with the following format:
++    {'protected': true/false}
++
++    :return: dictionary keyed by repo-registry-ids
++    :rtype: dict
++    """
++    all_repo_data_v2 = get_v2_data().get('repos', {})
++    relevant_repo_data = {}
++    for repo_registry_id, repo in all_repo_data_v2.items():
++        relevant_repo_data[repo_registry_id] = {'protected': repo.protected}
++
++    return relevant_repo_data
++
++
+ def validate_and_transform_repoid(repo_id):
+     """
+     Validates that the repo ID does not contain more than one slash, and removes
+diff --git a/crane/data.py b/crane/data.py
+index f40bd86..72d0595 100644
+--- a/crane/data.py
++++ b/crane/data.py
+@@ -158,7 +158,8 @@ def load_all(app):
+         logger.info('loading metadata from %s' % data_dir)
+         # scan data dir recursively and pick json files
+         paths = [os.path.join(dirpath, f)
+-                 for dirpath, dirnames, files in os.walk(data_dir)
++                 for dirpath, dirnames, files in os.walk(data_dir,
++                                                         followlinks=True)
+                  for f in fnmatch.filter(files, '*.json')]
+         # load data from each file
+         for metadata_file_path in paths:
+diff --git a/crane/templates/layout.html b/crane/templates/layout.html
+index d0ea87e..ad91b17 100644
+--- a/crane/templates/layout.html
++++ b/crane/templates/layout.html
+@@ -13,7 +13,7 @@
+     <link rel="apple-touch-icon-precomposed" sizes="114x114" href="../dist/img/apple-touch-icon-114-precomposed.png">
+     <link rel="apple-touch-icon-precomposed" sizes="72x72" href="../dist/img/apple-touch-icon-72-precomposed.png">
+     <link rel="apple-touch-icon-precomposed" href="../dist/img/apple-touch-icon-57-precomposed.png">
+-    <link href="../static/css/patternfly.min.css" rel="stylesheet" media="screen, print">
++    <link href="{{url_for('static', filename='css/patternfly.min.css')}}" rel="stylesheet" media="screen, print">
+     <!-- HTML5 shim and Respond.js IE8 support of HTML5 elements and media queries -->
+     <!--[if lt IE 9]>
+     <script src="../components/html5shiv/dist/html5shiv.min.js"></script>
+@@ -39,6 +39,9 @@
+           <li class="active">
+             <a href="/crane/repositories" class="active">Repositories</a>
+           </li>
++          <li class="active">
++            <a href="/crane/repositories/v2" class="active">Repositories v2</a>
++          </li>
+         </ul>
+       </div>
+     </nav>
+diff --git a/crane/views/crane.py b/crane/views/crane.py
+index e7e1016..fa5dc46 100644
+--- a/crane/views/crane.py
++++ b/crane/views/crane.py
+@@ -10,9 +10,10 @@ section = Blueprint('crane', __name__, url_prefix='/crane')
+
+
+ @section.route('/repositories')
++@section.route('/repositories/v1')
+ def repositories():
+     """
+-    Returns a json document containing a dictionary of repositories served by crane
++    Returns a json document containing a dictionary of v1 repositories served by crane
+     and keyed by the repo-registry-id which is unique for each repository.
+
+     :return:    json string containing a list of docker repositories
+@@ -23,4 +24,21 @@ def repositories():
+         response = current_app.make_response(json.dumps(repos_json))
+         response.headers['Content-Type'] = 'application/json'
+         return response
+-    return render_template("repositories.html", repos_json=repos_json)
++    return render_template("repositories.html", repos_json=repos_json, repo_type='v1')
++
++
++@section.route('/repositories/v2')
++def repositories_v2():
++    """
++    Returns a json document containing a dictionary of v2 repositories served by crane
++    and keyed by the repo-registry-id which is unique for each repository.
++
++    :return:    json string containing a list of docker repositories
++    :rtype:     basestring
++    """
++    repos_json = app_util.get_v2_repositories()
++    if 'Accept' in request.headers and request.headers['Accept'] == 'application/json':
++        response = current_app.make_response(json.dumps(repos_json))
++        response.headers['Content-Type'] = 'application/json'
++        return response
++    return render_template("repositories.html", repos_json=repos_json, repo_type='v2')
+diff --git a/docs/conf.py b/docs/conf.py
+index 1fd836b..8f69fe9 100644
+--- a/docs/conf.py
++++ b/docs/conf.py
+@@ -48,9 +48,9 @@ copyright = u'2014-2016, Pulp Team'
+ # built documents.
+ #
+ # The short X.Y version.
+-version = '2.1'
++version = '2.2a1'
+ # The full version, including alpha/beta/rc tags.
+-release = '2.1'
++release = '2.2a1'
+
+ # The language for content autogenerated by Sphinx. Refer to documentation
+ # for a list of supported languages.
+@@ -257,4 +257,3 @@ extlinks = {
+                   'ity%%3Adesc%%2Ccf_5%%3Adesc&utf8=%%E2%%9C%%93&v%%5Bcf_13%%5D%%5B%%5D=%s&v%%5Bt'
+                   'racker_id%%5D%%5B%%5D=1', 'bugs fixed in ')
+ }
+-
+diff --git a/docs/index.rst b/docs/index.rst
+index eafe7cf..f69fa12 100644
+--- a/docs/index.rst
++++ b/docs/index.rst
+@@ -170,11 +170,13 @@ These files are produced by a publish action in
+ Crane Admin
+ -----------
+
+-A list of images served by Crane can be obtained by opening ``/crane/repositories`` in a web
+-browser or with ``curl``. The default Apache configuration distributed with Crane restricts access
+-to this URL from ``localhost`` only; when accessed from a web browser, repositories and their
+-images are listed on a web page. This URL accepts an optional "Accept" header. When
+-"application/json" is specified, the application responds with JSON. Here is an example:
++A list of repositories served by Crane can be obtained by opening ``/crane/repositories``
++or ``/crane/repositories/v1`` for repositories with v1 content and ``/crane/repositories/v2``
++for repositories with v2 content in a web browser or with ``curl``. The default Apache
++configuration distributed with Crane restricts access to this URL from ``localhost`` only;
++when accessed from a web browser, repositories and some basuc info is listed on a web page.
++This URL accepts an optional "Accept" header. When "application/json" is specified, the application
++responds with JSON. Here is an example of repository with v1 content:
+
+ .. code-block:: json
+
+diff --git a/tests/test_app_util.py b/tests/test_app_util.py
+index 53b2b90..ca4b0bd 100644
+--- a/tests/test_app_util.py
++++ b/tests/test_app_util.py
+@@ -6,7 +6,7 @@ import unittest2 as unittest
+
+ from crane import app_util
+ from crane import exceptions
+-from crane.data import V1Repo
++from crane.data import V1Repo, V2Repo, V3Repo
+ import demo_data
+
+ from views import base
+@@ -277,3 +277,21 @@ class TestValidateGetRepositories(unittest.TestCase):
+         mock_get_data.return_value = {'repos': {}}
+         ret = app_util.get_repositories()
+         self.assertEqual(ret, {})
++
++
++class TestValidateGetV2Repositories(unittest.TestCase):
++
++    @mock.patch('crane.app_util.get_v2_data')
++    def test_get_v2_repositories(self, mock_get_v2_data):
++        repo = V2Repo(url="", url_path="", protected=True)
++        repo2 = V3Repo(url="", url_path="", schema2_data=[], protected=False)
++        mock_get_v2_data.return_value = {'repos': {'test-repo': repo, 'test-repo2': repo2}}
++        ret = app_util.get_v2_repositories()
++        self.assertEqual(ret['test-repo']['protected'], True)
++        self.assertEqual(ret['test-repo2']['protected'], False)
++
++    @mock.patch('crane.app_util.get_v2_data')
++    def test_get_v2_repositories_empty(self, mock_get_v2_data):
++        mock_get_v2_data.return_value = {'repos': {}}
++        ret = app_util.get_v2_repositories()
++        self.assertEqual(ret, {})
+diff --git a/tests/views/test_repositories.py b/tests/views/test_repositories.py
+index af06f06..69c0b00 100644
+--- a/tests/views/test_repositories.py
++++ b/tests/views/test_repositories.py
+@@ -30,6 +30,33 @@ class TestRepository(base.BaseCraneAPITest):
+         self.assertEqual(response_data['qux'], expected_data['qux'])
+         self.assertEqual(response_data['redhat/foo'], expected_data['redhat/foo'])
+
++    def test_repositories_v2_json(self):
++        response = self.test_client.get('/crane/repositories/v2',
++                                        headers={'Accept': 'application/json'})
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(response.headers['Content-Type'], 'application/json')
++
++        response_data = json.loads(response.data)
++        expected_data = {'registry': {'protected': False},
++                         'v2/bar': {'protected': False},
++                         'redhat/foo': {'protected': False}}
++
++        self.assertEqual(response_data['registry'], expected_data['registry'])
++        self.assertEqual(response_data['v2/bar'], expected_data['v2/bar'])
++        self.assertEqual(response_data['redhat/foo'], expected_data['redhat/foo'])
++
++    def test_repositories_v2_html(self):
++        response = self.test_client.get('/crane/repositories/v2')
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(response.headers['Content-Type'], 'text/html; charset=utf-8')
++        expected_data = {'registry': {'protected': False},
++                         'v2/bar': {'protected': False},
++                         'redhat/foo': {'protected': False}}
++
++        # Assert that all repo ids in json are present in the HTML
++        for repo_id, repo_info in expected_data.iteritems():
++            self.assertTrue(response.data.find(repo_id))
++
+     def test_repositories_html(self):
+         response = self.test_client.get('/crane/repositories')
+         self.assertEqual(response.status_code, 200)
+--
+2.13.0

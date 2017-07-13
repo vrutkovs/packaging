@@ -1,0 +1,321 @@
+From e89403e9589f3f8a7b4d522ccdf58f484f4cec5f Mon Sep 17 00:00:00 2001
+From: Ina Panova <ipanova@redhat.com>
+Date: Fri, 23 Jun 2017 18:22:55 +0200
+Subject: [PATCH] Update Crane to serve Manifest Lists.
+
+closes #2385
+https://pulp.plan.io/issues/2385
+---
+ crane/api/repository.py                    | 38 +++++++++++++++++++++++++++++-
+ crane/data.py                              | 12 +++++++++-
+ crane/views/v2.py                          | 32 +++++++++++++++++++++----
+ docs/index.rst                             | 10 +++++++-
+ tests/data/metadata_good/zoo_v4.json       | 14 +++++++++++
+ tests/data/v2/metadata_good_v4/zoo_v4.json | 14 +++++++++++
+ tests/demo_data.py                         |  2 ++
+ tests/test_data.py                         | 34 ++++++++++++++++++++++++++
+ tests/views/test_path.py                   | 16 +++++++++++++
+ 9 files changed, 165 insertions(+), 7 deletions(-)
+ create mode 100644 tests/data/metadata_good/zoo_v4.json
+ create mode 100644 tests/data/v2/metadata_good_v4/zoo_v4.json
+
+diff --git a/crane/api/repository.py b/crane/api/repository.py
+index 819cac9..e134e51 100644
+--- a/crane/api/repository.py
++++ b/crane/api/repository.py
+@@ -56,5 +56,41 @@ def get_schema2_data_for_repo(repo_id):
+     try:
+         schema2_data = repo.schema2_data
+     except AttributeError:
+-        schema2_data = None
++        schema2_data = []
+     return schema2_data
++
++
++@authorize_name
++def get_manifest_list_data_for_repo(repo_id):
++    """
++    Return the manifest list data for the repository.
++
++    :param repo_id: The identifier/name for the repository
++    :type repo_id: basestring
++    :returns: manifest list data for the repo
++    :rtype: list
++    """
++    repo = get_v2_data()['repos'][repo_id]
++    try:
++        manifest_list_data = repo.manifest_list_data
++    except AttributeError:
++        manifest_list_data = []
++    return manifest_list_data
++
++
++@authorize_name
++def get_manifest_list_amd64_for_repo(repo_id):
++    """
++    Return the manifest list amd64 tags for the repository.
++
++    :param repo_id: The identifier/name for the repository
++    :type repo_id: basestring
++    :returns: manifest list amd64 tags for the repo
++    :rtype: dict
++    """
++    repo = get_v2_data()['repos'][repo_id]
++    try:
++        manifest_list_amd64_tags = repo.manifest_list_amd64_tags
++    except AttributeError:
++        manifest_list_amd64_tags = {}
++    return manifest_list_amd64_tags
+diff --git a/crane/data.py b/crane/data.py
+index 72d0595..89e687a 100644
+--- a/crane/data.py
++++ b/crane/data.py
+@@ -24,6 +24,8 @@
+ V1Repo = namedtuple('V1Repo', ['url', 'images_json', 'tags_json', 'url_path', 'protected'])
+ V2Repo = namedtuple('V2Repo', ['url', 'url_path', 'protected'])
+ V3Repo = namedtuple('V3Repo', ['url', 'url_path', 'schema2_data', 'protected'])
++V4Repo = namedtuple('V4Repo', ['url', 'url_path', 'schema2_data', 'manifest_list_data',
++                               'manifest_list_amd64_tags', 'protected'])
+ 
+ 
+ def load_from_file(path):
+@@ -44,7 +46,7 @@ def load_from_file(path):
+     with open(path) as json_file:
+         repo_data = json.load(json_file)
+ 
+-    if repo_data['version'] not in (1, 2, 3):
++    if repo_data['version'] not in (1, 2, 3, 4):
+         raise ValueError('metadata version %d not supported' % repo_data['version'])
+ 
+     repo_id = repo_data['repo-registry-id']
+@@ -67,6 +69,14 @@ def load_from_file(path):
+                             json.dumps(repo_data['schema2_data']),
+                             repo_data.get('protected', False))
+         return repo_id, repo_tuple, None
++    elif repo_data['version'] == 4:
++        repo_tuple = V4Repo(repo_data['url'],
++                            url_path,
++                            json.dumps(repo_data['schema2_data']),
++                            json.dumps(repo_data['manifest_list_data']),
++                            json.dumps(repo_data['manifest_list_amd64_tags']),
++                            repo_data.get('protected', False))
++        return repo_id, repo_tuple, None
+ 
+ 
+ def monitor_data_dir(app, last_modified=0):
+diff --git a/crane/views/v2.py b/crane/views/v2.py
+index c7a2385..a3644bf 100644
+--- a/crane/views/v2.py
++++ b/crane/views/v2.py
+@@ -63,15 +63,39 @@ def name_redirect(relative_path):
+         base_url += '/'
+ 
+     if 'manifests' in path_component:
+-        schema2_data_json = repository.get_schema2_data_for_repo(name_component)
+-        if schema2_data_json:
+-            schema2_data = json.loads(schema2_data_json)
++        schema2_data = repository.get_schema2_data_for_repo(name_component)
++        manifest_list_data = repository.get_manifest_list_data_for_repo(name_component)
++        manifest_list_amd64_tags = repository.get_manifest_list_amd64_for_repo(name_component)
++        if schema2_data:
++            schema2_data = json.loads(schema2_data)
++        if manifest_list_data:
++            manifest_list_data = json.loads(manifest_list_data)
++        if manifest_list_amd64_tags:
++            manifest_list_amd64_tags = json.loads(manifest_list_amd64_tags)
++        if schema2_data or manifest_list_data:
+             manifest, identifier = path_component.split('/')
+             # if it is a newer docker client it sets accept headers to manifest schema 1, 2 and list
+             # if it is an older docker client, he doesnot set any of accept headers
+             accept_headers = request.headers.get('Accept')
+             schema2_mediatype = 'application/vnd.docker.distribution.manifest.v2+json'
+-            if schema2_mediatype in accept_headers and identifier in schema2_data:
++            manifest_list_mediatype = 'application/vnd.docker.distribution.manifest.list.v2+json'
++            # check first manifest list type
++            if manifest_list_mediatype in accept_headers and identifier in manifest_list_data:
++                path_component = os.path.join(manifest, 'list', identifier)
++            # this is needed for older clients which do not understand manifest list
++            elif identifier in manifest_list_amd64_tags.keys():
++                if schema2_mediatype in accept_headers:
++                    path_component = os.path.join(
++                        manifest, str(manifest_list_amd64_tags[identifier][1]),
++                        manifest_list_amd64_tags[identifier][0])
++                elif manifest_list_amd64_tags[identifier][1] == 1:
++                    path_component = os.path.join(
++                        manifest, '1', manifest_list_amd64_tags[identifier][0])
++                # this is needed in case when there is no amd64 image manifest, but there are within
++                # one repo manifest list and image manifest with the same tag
++                else:
++                    path_component = os.path.join(manifest, '1', identifier)
++            elif schema2_mediatype in accept_headers and identifier in schema2_data:
+                 path_component = os.path.join(manifest, '2', identifier)
+             else:
+                 path_component = os.path.join(manifest, '1', identifier)
+diff --git a/docs/index.rst b/docs/index.rst
+index f69fa12..c658e69 100644
+--- a/docs/index.rst
++++ b/docs/index.rst
+@@ -267,9 +267,17 @@ Example ``apache.conf`` file:
+ Release Notes
+ -------------
+ 
++3.0.0
++
++The 3.0.0 release of Crane adds support for the Docker v2 API manifest lists schema version 2.
++Crane now supports version 4 of the json data file produced by Pulp. The new version enables
++Crane to serve manifest lists. In order to decide to which manifest type to redirect
++the request, Crane looks for an optional accept header specified in the request and based on this
++information redirects whether to the manifest list or image manifest.
++
+ 2.2.0
+ 
+-The 2.2.0 release of Crane adds support for the Dcoker v2 API manifests schema version 2.
++The 2.2.0 release of Crane adds support for the Docker v2 API manifests schema version 2.
+ Crane now supports version 3 of the json data file produced by Pulp. The new version enables
+ Crane to serve schema version 2 manifests. In order to decide to wich schema version to redirect
+ the request, Crane looks for an optional accept header specified in the request and based on this
+diff --git a/tests/data/metadata_good/zoo_v4.json b/tests/data/metadata_good/zoo_v4.json
+new file mode 100644
+index 0000000..aab0135
+--- /dev/null
++++ b/tests/data/metadata_good/zoo_v4.json
+@@ -0,0 +1,14 @@
++{
++    "repository": "zoo",
++    "repo-registry-id": "redhat/zoo",
++    "url": "http://cdn.redhat.com/zoo/bar",
++    "version": 4,
++    "schema2_data": ["sha256:a1d963a97357110bdbfc70767a495c8df6ddfa9bda4da3183165ca73c3b990d2",
++                     "1.25.1-musl", "1.25.0-glibc"],
++    "manifest_list_amd64_tags": {"bar": ["sha256:c55544de64a01e157b9d931f5db7a16554a14be19c367f91c9a8cdc46db086bf", 2],
++                                 "latest": ["sha256:c55544de64a01e157b9d931f5db7a16554a14be19c367f91c9a8cdc46db086bf", 1]},
++    "protected": false,
++    "type": "pulp-docker-redirect",
++    "manifest_list_data": ["bar", "sha256:3e0e8f106ef40081ed9977a432dcf1720e4a6af101b243686b3dc548540e7ca8",
++                           "sha256:a90b7a658d44eadc569a296d45217115e61add1a7ae0958f084841c5f3ce7956", "latest"]
++}
+diff --git a/tests/data/v2/metadata_good_v4/zoo_v4.json b/tests/data/v2/metadata_good_v4/zoo_v4.json
+new file mode 100644
+index 0000000..aab0135
+--- /dev/null
++++ b/tests/data/v2/metadata_good_v4/zoo_v4.json
+@@ -0,0 +1,14 @@
++{
++    "repository": "zoo",
++    "repo-registry-id": "redhat/zoo",
++    "url": "http://cdn.redhat.com/zoo/bar",
++    "version": 4,
++    "schema2_data": ["sha256:a1d963a97357110bdbfc70767a495c8df6ddfa9bda4da3183165ca73c3b990d2",
++                     "1.25.1-musl", "1.25.0-glibc"],
++    "manifest_list_amd64_tags": {"bar": ["sha256:c55544de64a01e157b9d931f5db7a16554a14be19c367f91c9a8cdc46db086bf", 2],
++                                 "latest": ["sha256:c55544de64a01e157b9d931f5db7a16554a14be19c367f91c9a8cdc46db086bf", 1]},
++    "protected": false,
++    "type": "pulp-docker-redirect",
++    "manifest_list_data": ["bar", "sha256:3e0e8f106ef40081ed9977a432dcf1720e4a6af101b243686b3dc548540e7ca8",
++                           "sha256:a90b7a658d44eadc569a296d45217115e61add1a7ae0958f084841c5f3ce7956", "latest"]
++}
+diff --git a/tests/demo_data.py b/tests/demo_data.py
+index 1ca695c..1ea862d 100644
+--- a/tests/demo_data.py
++++ b/tests/demo_data.py
+@@ -4,12 +4,14 @@
+ metadata_bad_path = os.path.join(os.path.dirname(__file__), 'data/metadata_good/')
+ metadata_good_path_v2 = os.path.join(os.path.dirname(__file__), 'data/v2/metadata_good/')
+ metadata_good_path_v3 = os.path.join(os.path.dirname(__file__), 'data/v2/metadata_good_v3/')
++metadata_good_path_v4 = os.path.join(os.path.dirname(__file__), 'data/v2/metadata_good_v4/')
+ metadata_bad_path_v2 = os.path.join(os.path.dirname(__file__), 'data/v2/metadata_bad/')
+ 
+ demo_config_path = os.path.join(os.path.dirname(__file__), 'data/demo_config.conf')
+ foo_metadata_path = os.path.join(os.path.dirname(__file__), 'data/metadata_good/foo.json')
+ foo_v2_metadata_path = os.path.join(os.path.dirname(__file__), 'data/metadata_good/foo_v2.json')
+ foo_v3_metadata_path = os.path.join(os.path.dirname(__file__), 'data/metadata_good/foo_v3.json')
++foo_v4_metadata_path = os.path.join(os.path.dirname(__file__), 'data/metadata_good/zoo_v4.json')
+ wrong_version_path = os.path.join(os.path.dirname(__file__),
+                                   'data/metadata_bad/wrong_version.json')
+ 
+diff --git a/tests/test_data.py b/tests/test_data.py
+index 2b725a3..a0565a9 100644
+--- a/tests/test_data.py
++++ b/tests/test_data.py
+@@ -62,6 +62,27 @@ def test_demo_file_v3(self):
+                         '0d2' in schema2_data)
+         self.assertTrue('1.25.1-musl' in schema2_data)
+ 
++    def test_demo_file_v4(self):
++        repo_id, repo_tuple, image_ids = data.load_from_file(demo_data.foo_v4_metadata_path)
++
++        self.assertEqual(repo_id, 'redhat/zoo')
++        self.assertEqual(repo_tuple.url, 'http://cdn.redhat.com/zoo/bar')
++        self.assertEqual(repo_tuple.url_path, '/zoo/bar')
++        self.assertEqual(repo_tuple.protected, False)
++
++        schema2_data = json.loads(repo_tuple.schema2_data)
++        self.assertTrue('sha256:a1d963a97357110bdbfc70767a495c8df6ddfa9bda4da3183165ca73c3b99'
++                        '0d2' in schema2_data)
++        self.assertTrue('1.25.1-musl' in schema2_data)
++        manifest_list_data = json.loads(repo_tuple.manifest_list_data)
++        self.assertTrue('bar' in manifest_list_data)
++        self.assertTrue('sha256:a90b7a658d44eadc569a296d45217115e61add1a7ae0958f084841c5f3ce7'
++                        '956' in manifest_list_data)
++        manifest_list_amd64 = json.loads(repo_tuple.manifest_list_amd64_tags)
++        self.assertTrue('bar' in manifest_list_amd64.keys())
++        expected = ["sha256:c55544de64a01e157b9d931f5db7a16554a14be19c367f91c9a8cdc46db086bf", 2]
++        self.assertEqual(manifest_list_amd64['bar'], expected)
++
+     def test_wrong_version(self):
+         self.assertRaises(ValueError, data.load_from_file, demo_data.wrong_version_path)
+ 
+@@ -122,6 +143,19 @@ def test_with_v3_metadata_good(self, mock_walk):
+         self.assertEqual(data.v2_response_data['repos'].get('redhat/foo').url,
+                          'http://cdn.redhat.com/foo/bar')
+ 
++    @mock.patch('os.walk', return_value=[
++               (demo_data.metadata_good_path_v4, ('', ), ('zoo_v4.json', ))])
++    def test_with_v4_metadata_good(self, mock_walk):
++        mock_app = mock.MagicMock()
++
++        data.load_all(mock_app)
++
++        # make sure the Repo namedtuple is in the right place
++        self.assertTrue(isinstance(data.v2_response_data['repos'].get('redhat/zoo'), data.V4Repo))
++        # spot-check a value
++        self.assertEqual(data.v2_response_data['repos'].get('redhat/zoo').url,
++                         'http://cdn.redhat.com/zoo/bar')
++
+     @mock.patch.object(data.logger, 'error', spec_set=True)
+     @mock.patch('os.walk', return_value=[
+                 (demo_data.metadata_bad_path, ('', ), ('wrong_version.json', ))])
+diff --git a/tests/views/test_path.py b/tests/views/test_path.py
+index 189120a..e6e2439 100644
+--- a/tests/views/test_path.py
++++ b/tests/views/test_path.py
+@@ -21,6 +21,14 @@ def test_valid_repo_name_for_manifest(self):
+         self.assertTrue(response.headers['Content-Type'].startswith('text/html'))
+         self.assertTrue('foo/bar/manifests/2' in response.headers['Location'])
+ 
++    def test_valid_repo_name_for_manifest_list(self):
++        headers = {'Accept': 'application/vnd.docker.distribution.manifest.list.v2+json'}
++        response = self.test_client.get('/v2/redhat/zoo/manifests/latest', headers=headers)
++
++        self.assertEqual(response.status_code, 302)
++        self.assertTrue(response.headers['Content-Type'].startswith('text/html'))
++        self.assertTrue('zoo/bar/manifests/list' in response.headers['Location'])
++
+     def test_valid_repo_name_for_manifest_digest(self):
+         headers = {'Accept': 'application/vnd.docker.distribution.manifest.v2+json'}
+         response = self.test_client.get('/v2/redhat/foo/manifests/123456789', headers=headers)
+@@ -29,6 +37,14 @@ def test_valid_repo_name_for_manifest_digest(self):
+         self.assertTrue(response.headers['Content-Type'].startswith('text/html'))
+         self.assertTrue('foo/bar/manifests/1' in response.headers['Location'])
+ 
++    def test_valid_repo_name_for_manifest_list_digest(self):
++        headers = {'Accept': 'application/vnd.docker.distribution.manifest.list.v2+json'}
++        response = self.test_client.get('/v2/redhat/foo/manifests/123456789', headers=headers)
++
++        self.assertEqual(response.status_code, 302)
++        self.assertTrue(response.headers['Content-Type'].startswith('text/html'))
++        self.assertTrue('foo/bar/manifests/1' in response.headers['Location'])
++
+     def test_valid_repo_name_for_tags(self):
+         response = self.test_client.get('/v2/redhat/foo/tags/latest')
+ 

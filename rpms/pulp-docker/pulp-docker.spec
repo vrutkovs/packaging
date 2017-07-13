@@ -1,17 +1,17 @@
-%global required_pulp_version 2.8
+%global required_pulp_version 2.13
 
 Name: pulp-docker
-Version: 2.0.1
-Release: 1%{?dist}
+Version: 2.4.0
+Release: 5.manifestlists%{?dist}
+BuildArch: noarch
 
 License:   GPLv2+
 Summary:   Support for Docker content in the Pulp platform
 URL:       https://github.com/pulp/pulp_docker
-Source0:   %{url}/archive/%{version}/%{name}-%{version}.tar.gz
-BuildArch: noarch
+Source0:   https://github.com/pulp/pulp_docker/archive/%{name}-%{version}-1.tar.gz
+Patch0:    pulp-docker-manifest-lists-support.patch
 
 BuildRequires: python2-devel
-BuildRequires: python2-rpm-macros
 BuildRequires: python-setuptools
 BuildRequires: python-sphinx
 
@@ -22,8 +22,8 @@ support Docker content.
 
 
 %prep
-%autosetup -n %{name}-%{version}
-
+%autosetup -n pulp_docker-%{name}-%{version}-1 -p1
+%patch0 -p1
 
 %build
 for directory in $(find . -type f -name "setup.py" | xargs dirname)
@@ -96,6 +96,7 @@ Summary: Pulp Docker plugins
 Requires: pulp-server >= %{required_pulp_version}
 Requires: python-nectar >= 1.3.0
 Requires: python2-pulp-docker-common = %{version}
+Requires: rsync
 
 
 %description plugins
@@ -137,8 +138,57 @@ Common libraries for python2-pulp-docker
 
 
 %changelog
-* Mon Jun 06 2016 Jeremy Cline <jcline@redhat.com> 2.0.1-1
-- Bump version to 2.0.1
+* Thu Jul 13 2017 Vadim Rutkovsky <vrutkovs@redhat.com> - 2.4.0-4.manifestlists
+- Add manifest list support patch
 
-* Thu Mar 17 2016 Randy Barlow <rbarlow@redhat.com> 2.0.0-1
-- Initial import, taken from Fedora 24.
+* Wed Jun 21 2017 Patrick Creech <pcreech@redhat.com> - 2.4.0-1
+- Update to 2.4.0
+
+* Mon Feb 27 2017 Bihan Zhang <bizhang@redhat.com> - 2.3.0-1
+- Update to 2.3.0
+
+* Sat Feb 11 2017 Fedora Release Engineering <releng@fedoraproject.org> - 2.1.0-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_26_Mass_Rebuild
+
+* Wed Sep 21 2016 Patrick Creech <pcreech@redhat.com> - 2.1.0-2
+- Remove trailing .0 on pulp_version
+
+* Wed Sep 21 2016 Patrick Creech <pcreech@redhat.com> - 2.1.0-1
+- Update to 2.1.0
+- Adding rsync dependency
+
+* Tue Jul 19 2016 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.0.2-2
+- https://fedoraproject.org/wiki/Changes/Automatic_Provides_for_Python_RPM_Packages
+
+* Thu Jul 14 2016 Jeremy Cline <jcline@redhat.com> - 2.0.2-1
+- Update to 2.0.2
+
+* Mon May 16 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.1-1
+- Update to 2.0.1 (#1337316).
+- Change the license to GPLv2+ as per the upstream COPYRIGHT file.
+- Remove unneeded python2-setuptools dependency.
+
+* Thu Mar 17 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-1
+- Update to the 2.0.0 release.
+
+* Wed Mar 09 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-0.9.rc.1
+- Update to the 2.0.0 release candidate.
+
+* Fri Mar 04 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-0.7.beta.1
+- Update to the seventh beta.
+- Corrected the summary and description on the documentation subpackage.
+- Depend on python2-rpm-macros instead of rpm-python.
+- No longer need to rm the tests since that was fixed upstream.
+
+* Thu Feb 04 2016 Fedora Release Engineering <releng@fedoraproject.org> - 2.0.0-0.4.beta.1.1
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_24_Mass_Rebuild
+
+* Fri Jan 29 2016 Jeremy Cline <jeremy@jcline.org> - 2.0.0-0.4.beta.1
+- Raise to the fourth beta.
+
+* Thu Jan 21 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-0.3.beta.1
+- Raise to the third beta.
+- Remove usage of defattr, using install to set ownership instead.
+
+* Mon Jan 11 2016 Randy Barlow <rbarlow@redhat.com> 2.0.0-0.1.beta.1
+- Initial release.

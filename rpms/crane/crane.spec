@@ -6,13 +6,15 @@ a URL formed with per-repository settings.
 
 
 Name: python-crane
-Version: 2.0.0
-Release: 2%{?dist}
+Version: 2.1.0
+Release: 1.manifestlists%{?dist}
 
 License:   GPLv2+
 Summary:   %{sum}
 URL:       https://github.com/pulp/crane
-Source0:   %{url}/archive/%{version}/crane-%{version}.tar.gz
+Source0:   https://github.com/pulp/crane/archive/python-crane-%{version}-1.tar.gz
+Patch1:    0001-Update-to-latest-master.patch
+Patch2:    0002-manifest-lists-support.patch
 BuildArch: noarch
 
 BuildRequires: python2-devel
@@ -27,7 +29,7 @@ BuildRequires: python-setuptools
 Summary: %{sum}
 Requires: python-flask >= 0.9
 Requires: python-rhsm
-Requires: python-setuptools
+Requires: python2-setuptools
 Requires(post): policycoreutils-python
 Requires(postun): policycoreutils-python
 
@@ -47,7 +49,7 @@ Provides: bundled(patternflyicons-fonts-web)
 
 
 %prep
-%autosetup -n crane-%{version}
+%autosetup -n crane-python-crane-%{version}-1 -p1
 
 
 %build
@@ -77,27 +79,50 @@ install -pm644 deployment/crane.wsgi %{buildroot}/%{_datadir}/crane/
 
 %post
 if /usr/sbin/selinuxenabled; then
-    if [ -d "%{_var}/lib/crane" ]; then
-        semanage fcontext -a -t httpd_sys_content_t '%{_var}/lib/crane(/.*)?'
-        restorecon -R -v %{_var}/lib/crane
-    fi
+    semanage fcontext -a -t httpd_sys_content_t '%{_var}/lib/crane(/.*)?'
+    restorecon -R -v %{_var}/lib/crane
 fi
 
 
 %postun
 if [ $1 -eq 0 ] ; then  # final removal
     if /usr/sbin/selinuxenabled; then
-        if [ -d "%{_var}/lib/crane" ]; then
-            semanage fcontext -d -t httpd_sys_content_t '%{_var}/lib/crane(/.*)?'
-            restorecon -R -v %{_var}/lib/crane
-        fi
+        semanage fcontext -d -t httpd_sys_content_t '%{_var}/lib/crane(/.*)?'
+        restorecon -R -v %{_var}/lib/crane
     fi
 fi
 
 
 %changelog
-* Mon Jul 11 2016 Jeremy Cline <jcline@redhat.com> - 2.0.0-2
-- Update post/postun scripts to check for the directory before using semanage
+* Thu Jul 13 2017 Vadim Rutkovsky <vrutkovs@redhat.com> - 2.1.0-1.manifestlists
+- Add manifest list support patch
 
-* Mon May 09 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-1
-- Initial import from Fedora 24.
+* Wed Jun 21 2017 Patrick Creech <pcreech@redhat.com> - 2.1.0-1
+- new version
+
+* Sat Feb 11 2017 Fedora Release Engineering <releng@fedoraproject.org> - 2.0.2-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_26_Mass_Rebuild
+
+* Fri Aug 19 2016 Jeremy Cline <jcline@redhat.com> - 2.0.2-1
+- Update to 2.0.2
+
+* Tue Jul 19 2016 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.0.0-3
+- https://fedoraproject.org/wiki/Changes/Automatic_Provides_for_Python_RPM_Packages
+
+* Tue May 17 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-2
+- Change the license to GPLv2+ as per the COPYRIGHT file.
+
+* Fri Mar 18 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-1
+- Update to 2.0.0.
+
+* Wed Mar 09 2016 Randy Barlow <rbarlow@redhat.com> - 2.0.0-0.9.rc.1
+- Update to the 2.0.0 release candidate.
+
+* Thu Feb 04 2016 Fedora Release Engineering <releng@fedoraproject.org> - 2.0.0-0.4.beta.1.1
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_24_Mass_Rebuild
+
+* Fri Jan 29 2016 Jeremy Cline <jeremy@jcline.com> 2.0.0-0.4.beta.1
+- Bump to the fourth beta release of 2.0.0.
+
+* Mon Jan 11 2016 Randy Barlow <rbarlow@redhat.com> 2.0.0-0.1.beta.1
+- Initial release.
